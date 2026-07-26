@@ -1,15 +1,19 @@
 import os
+import asyncio
 import json
 import re
 import base64
 import secrets
 import hashlib
+import hmac
+import html
 import logging
 import smtplib
 import sqlite3
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from typing import Optional
+from typing import Optional, Literal
 
 from dotenv import load_dotenv
 load_dotenv()  # loads .env before any os.getenv() calls
@@ -20,7 +24,7 @@ from openai import OpenAI
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
@@ -29,6 +33,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import bcrypt
+import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 
@@ -53,6 +58,9 @@ if _enc_env:
     ENCRYPTION_KEY = (_raw + b"\x00" * 32)[:32]
 else:
     ENCRYPTION_KEY = secrets.token_bytes(32)
+
+if IS_PRODUCTION and not _enc_env:
+    raise RuntimeError("ENCRYPTION_KEY is required in production.")
 
 # ── USER STORE (SQLite) ───────────────────────────────────────────────────────
 DATABASE_FILE = os.getenv("DATABASE_FILE", os.path.join(BASE_DIR, "users.db"))
@@ -90,6 +98,84 @@ def _init_db() -> None:
             )
         """)
         db.execute("CREATE INDEX IF NOT EXISTS idx_action_tokens_lookup ON action_tokens(token_hash, purpose)")
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS patients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                name_encrypted TEXT NOT NULL,
+                phone_encrypted TEXT,
+                email_encrypted TEXT,
+                timezone TEXT NOT NULL DEFAULT 'America/New_York',
+                sms_consent INTEGER NOT NULL DEFAULT 0,
+                voice_consent INTEGER NOT NULL DEFAULT 0,
+                email_consent INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS appointments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                patient_id INTEGER NOT NULL,
+                starts_at TEXT NOT NULL,
+                clinician TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'scheduled'
+                    CHECK (status IN ('scheduled', 'confirmed', 'cancelled', 'completed')),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS reminder_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                appointment_id INTEGER NOT NULL,
+                channel TEXT NOT NULL CHECK (channel IN ('sms', 'voice', 'email')),
+                scheduled_for TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                sent_at TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(appointment_id, channel),
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS communication_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER,
+                appointment_id INTEGER,
+                patient_id INTEGER,
+                channel TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+                outcome TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                provider_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE SET NULL,
+                FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE SET NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS call_handoffs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caller_phone_encrypted TEXT,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued'
+                    CHECK (status IN ('queued', 'transferred', 'resolved')),
+                created_at TEXT NOT NULL,
+                resolved_at TEXT
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_appointments_owner_start ON appointments(owner_user_id, starts_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_reminder_jobs_due ON reminder_jobs(status, scheduled_for)")
 
 _init_db()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token", auto_error=False)
@@ -442,6 +528,211 @@ def extract_medical_codes(note: str) -> dict:
     return _parse_llm_response(response.choices[0].message.content)
 
 
+# ── CLINICAL WORKFLOW AUTOMATION ─────────────────────────────────────────────
+REMINDER_LEAD_TIME = timedelta(days=7)
+FRONT_DESK_KEYWORDS = {
+    "bill", "billing", "insurance", "refund", "payment", "medical record",
+    "records", "referral", "prior authorization", "complaint", "manager",
+    "change provider", "new patient",
+}
+
+
+def _encrypt_optional(value: Optional[str]) -> Optional[str]:
+    cleaned = (value or "").strip()
+    return aes_encrypt(cleaned) if cleaned else None
+
+
+def _decrypt_optional(value: Optional[str]) -> str:
+    return aes_decrypt(value) if value else ""
+
+
+def _iso_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _appointment_row(db: sqlite3.Connection, appointment_id: int, owner_user_id: int):
+    return db.execute(
+        """SELECT appointments.*, patients.name_encrypted, patients.phone_encrypted,
+                  patients.email_encrypted, patients.sms_consent,
+                  patients.voice_consent, patients.email_consent
+           FROM appointments JOIN patients ON patients.id = appointments.patient_id
+           WHERE appointments.id = ? AND appointments.owner_user_id = ?""",
+        (appointment_id, owner_user_id),
+    ).fetchone()
+
+
+def _patient_json(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": _decrypt_optional(row["name_encrypted"]),
+        "phone": _decrypt_optional(row["phone_encrypted"]),
+        "email": _decrypt_optional(row["email_encrypted"]),
+        "timezone": row["timezone"],
+        "consent": {
+            "sms": bool(row["sms_consent"]),
+            "voice": bool(row["voice_consent"]),
+            "email": bool(row["email_consent"]),
+        },
+        "created_at": row["created_at"],
+    }
+
+
+def _appointment_json(row) -> dict:
+    result = {
+        "id": row["id"],
+        "patient_id": row["patient_id"],
+        "starts_at": row["starts_at"],
+        "clinician": row["clinician"],
+        "location": row["location"],
+        "status": row["status"],
+    }
+    if "name_encrypted" in row.keys():
+        result["patient_name"] = _decrypt_optional(row["name_encrypted"])
+    return result
+
+
+def _schedule_reminders(db: sqlite3.Connection, appointment) -> int:
+    if appointment["status"] != "scheduled":
+        return 0
+    scheduled_for = datetime.fromisoformat(appointment["starts_at"]) - REMINDER_LEAD_TIME
+    consent = {
+        "sms": bool(appointment["sms_consent"]) and bool(appointment["phone_encrypted"]),
+        "voice": bool(appointment["voice_consent"]) and bool(appointment["phone_encrypted"]),
+        "email": bool(appointment["email_consent"]) and bool(appointment["email_encrypted"]),
+    }
+    created = 0
+    for channel, allowed in consent.items():
+        if allowed:
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO reminder_jobs
+                   (owner_user_id, appointment_id, channel, scheduled_for, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    appointment["owner_user_id"],
+                    appointment["id"],
+                    channel,
+                    _iso_datetime(scheduled_for),
+                    _utcnow().isoformat(),
+                ),
+            )
+            created += cursor.rowcount
+    return created
+
+
+def _reminder_copy(appointment, channel: str) -> tuple[str, str]:
+    patient_name = _decrypt_optional(appointment["name_encrypted"])
+    first_name = patient_name.split()[0] if patient_name else "there"
+    starts = datetime.fromisoformat(appointment["starts_at"]).astimezone(timezone.utc)
+    when = starts.strftime("%A, %B %-d at %-I:%M %p UTC")
+    practice = os.getenv("PRACTICE_NAME", "your care team")
+    location = f" at {appointment['location']}" if appointment["location"] else ""
+    if channel == "email":
+        subject = f"Appointment reminder for {starts.strftime('%B %-d')}"
+        body = (
+            f"Hello {first_name},\n\nThis is a reminder from {practice} that you have "
+            f"an appointment on {when}{location}.\n\n"
+            "Please call the office if you need to reschedule. Do not reply with medical information."
+        )
+        return subject, body
+    body = (
+        f"Hello {first_name}, this is {practice}. Reminder: your appointment is {when}{location}. "
+        "Call the office to reschedule. Reply STOP to opt out."
+    )
+    return "", body
+
+
+def _twilio_request(path: str, data: dict) -> dict:
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not account_sid or not auth_token:
+        raise RuntimeError("Twilio delivery is not configured.")
+    response = httpx.post(
+        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/{path}",
+        data=data,
+        auth=(account_sid, auth_token),
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _deliver_reminder(appointment, channel: str) -> str:
+    subject, body = _reminder_copy(appointment, channel)
+    delivery_mode = os.getenv("COMMUNICATION_DELIVERY_MODE", "preview").lower()
+    if delivery_mode == "preview":
+        return f"preview-{secrets.token_hex(8)}"
+    if channel == "email":
+        _send_email(_decrypt_optional(appointment["email_encrypted"]), subject, body)
+        return f"smtp-{secrets.token_hex(8)}"
+
+    twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+    if not twilio_number:
+        raise RuntimeError("TWILIO_PHONE_NUMBER is not configured.")
+    to_number = _decrypt_optional(appointment["phone_encrypted"])
+    if channel == "sms":
+        result = _twilio_request(
+            "Messages.json", {"From": twilio_number, "To": to_number, "Body": body}
+        )
+    else:
+        voice_url = f"{APP_BASE_URL}/webhooks/twilio/reminder-voice?appointment_id={appointment['id']}"
+        result = _twilio_request(
+            "Calls.json", {"From": twilio_number, "To": to_number, "Url": voice_url}
+        )
+    return result.get("sid", "")
+
+
+def dispatch_due_reminders(now: Optional[datetime] = None, limit: int = 50) -> dict:
+    now = now or _utcnow()
+    sent = failed = 0
+    with _db() as db:
+        jobs = db.execute(
+            """SELECT * FROM reminder_jobs
+               WHERE status = 'pending' AND scheduled_for <= ?
+               ORDER BY scheduled_for LIMIT ?""",
+            (_iso_datetime(now), limit),
+        ).fetchall()
+        for job in jobs:
+            claimed = db.execute(
+                """UPDATE reminder_jobs SET status = 'processing', attempts = attempts + 1
+                   WHERE id = ? AND status = 'pending'""",
+                (job["id"],),
+            ).rowcount
+            if not claimed:
+                continue
+            appointment = _appointment_row(db, job["appointment_id"], job["owner_user_id"])
+            if not appointment or appointment["status"] not in ("scheduled", "confirmed"):
+                db.execute("UPDATE reminder_jobs SET status = 'cancelled' WHERE id = ?", (job["id"],))
+                continue
+            try:
+                provider_id = _deliver_reminder(appointment, job["channel"])
+                sent_at = _utcnow().isoformat()
+                db.execute(
+                    "UPDATE reminder_jobs SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ?",
+                    (sent_at, job["id"]),
+                )
+                db.execute(
+                    """INSERT INTO communication_events
+                       (owner_user_id, appointment_id, patient_id, channel, direction,
+                        outcome, detail, provider_id, created_at)
+                       VALUES (?, ?, ?, ?, 'outbound', 'sent', ?, ?, ?)""",
+                    (
+                        job["owner_user_id"], appointment["id"], appointment["patient_id"],
+                        job["channel"], "Seven-day appointment reminder",
+                        provider_id, sent_at,
+                    ),
+                )
+                sent += 1
+            except Exception as exc:
+                logger.exception("Reminder job %s failed", job["id"])
+                db.execute(
+                    "UPDATE reminder_jobs SET status = 'failed', last_error = ? WHERE id = ?",
+                    (str(exc)[:500], job["id"]),
+                )
+                failed += 1
+    return {"processed": len(jobs), "sent": sent, "failed": failed}
+
 
 # ── PAGE ROUTES ───────────────────────────────────────────────────────────────
 def _serve(filename: str) -> str:
@@ -459,6 +750,9 @@ async def serve_app():
     return _serve("app.html")
 
 
+@app.get("/workflows", response_class=HTMLResponse)
+async def serve_workflows():
+    return _serve("workflows.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -665,6 +959,296 @@ async def logout(request: Request, response: Response):
     _clear_auth_cookies(response)
     return {"message": "Signed out."}
 
+
+class PatientInput(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    timezone: str = "America/New_York"
+    sms_consent: bool = False
+    voice_consent: bool = False
+    email_consent: bool = False
+
+
+class AppointmentInput(BaseModel):
+    patient_id: int
+    starts_at: datetime
+    clinician: str = ""
+    location: str = ""
+
+
+class AppointmentStatusInput(BaseModel):
+    status: Literal["scheduled", "confirmed", "cancelled", "completed"]
+
+
+def _authenticated_write(request: Request) -> None:
+    if request.cookies.get("mobillity_session"):
+        _require_csrf(request)
+
+
+@app.get("/api/workflows/overview")
+async def workflow_overview(current_user=Depends(get_current_user)):
+    with _db() as db:
+        patients = db.execute(
+            "SELECT * FROM patients WHERE owner_user_id = ? ORDER BY created_at DESC",
+            (current_user["id"],),
+        ).fetchall()
+        appointments = db.execute(
+            """SELECT appointments.*, patients.name_encrypted
+               FROM appointments JOIN patients ON patients.id = appointments.patient_id
+               WHERE appointments.owner_user_id = ?
+               ORDER BY appointments.starts_at""",
+            (current_user["id"],),
+        ).fetchall()
+        jobs = db.execute(
+            """SELECT reminder_jobs.*, appointments.starts_at, patients.name_encrypted
+               FROM reminder_jobs
+               JOIN appointments ON appointments.id = reminder_jobs.appointment_id
+               JOIN patients ON patients.id = appointments.patient_id
+               WHERE reminder_jobs.owner_user_id = ?
+               ORDER BY reminder_jobs.scheduled_for DESC LIMIT 100""",
+            (current_user["id"],),
+        ).fetchall()
+        events = db.execute(
+            """SELECT communication_events.*, patients.name_encrypted
+               FROM communication_events
+               LEFT JOIN patients ON patients.id = communication_events.patient_id
+               WHERE communication_events.owner_user_id = ?
+               ORDER BY communication_events.created_at DESC LIMIT 100""",
+            (current_user["id"],),
+        ).fetchall()
+    return {
+        "patients": [_patient_json(row) for row in patients],
+        "appointments": [_appointment_json(row) for row in appointments],
+        "reminders": [
+            {
+                "id": row["id"], "appointment_id": row["appointment_id"],
+                "patient_name": _decrypt_optional(row["name_encrypted"]),
+                "starts_at": row["starts_at"], "channel": row["channel"],
+                "scheduled_for": row["scheduled_for"], "status": row["status"],
+                "last_error": row["last_error"],
+            }
+            for row in jobs
+        ],
+        "events": [
+            {
+                "id": row["id"],
+                "patient_name": _decrypt_optional(row["name_encrypted"]),
+                "channel": row["channel"], "direction": row["direction"],
+                "outcome": row["outcome"], "detail": row["detail"],
+                "created_at": row["created_at"],
+            }
+            for row in events
+        ],
+        "delivery_mode": os.getenv("COMMUNICATION_DELIVERY_MODE", "preview"),
+    }
+
+
+@app.post("/api/workflows/patients", status_code=201)
+async def create_patient(
+    request: Request, body: PatientInput, current_user=Depends(get_current_user)
+):
+    _authenticated_write(request)
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Patient name is required.")
+    if (body.sms_consent or body.voice_consent) and not (body.phone or "").strip():
+        raise HTTPException(status_code=400, detail="A phone number is required for SMS or voice consent.")
+    if body.email_consent and not body.email:
+        raise HTTPException(status_code=400, detail="An email address is required for email consent.")
+    with _db() as db:
+        cursor = db.execute(
+            """INSERT INTO patients
+               (owner_user_id, name_encrypted, phone_encrypted, email_encrypted,
+                timezone, sms_consent, voice_consent, email_consent, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                current_user["id"], aes_encrypt(body.name.strip()),
+                _encrypt_optional(body.phone), _encrypt_optional(str(body.email) if body.email else None),
+                body.timezone.strip()[:80], int(body.sms_consent), int(body.voice_consent),
+                int(body.email_consent), _utcnow().isoformat(),
+            ),
+        )
+        row = db.execute("SELECT * FROM patients WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return _patient_json(row)
+
+
+@app.post("/api/workflows/appointments", status_code=201)
+async def create_appointment(
+    request: Request, body: AppointmentInput, current_user=Depends(get_current_user)
+):
+    _authenticated_write(request)
+    starts_at = body.starts_at
+    if starts_at.tzinfo is None:
+        raise HTTPException(status_code=400, detail="Appointment time must include a timezone.")
+    with _db() as db:
+        patient = db.execute(
+            "SELECT id FROM patients WHERE id = ? AND owner_user_id = ?",
+            (body.patient_id, current_user["id"]),
+        ).fetchone()
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+        cursor = db.execute(
+            """INSERT INTO appointments
+               (owner_user_id, patient_id, starts_at, clinician, location, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                current_user["id"], body.patient_id, _iso_datetime(starts_at),
+                body.clinician.strip()[:120], body.location.strip()[:200],
+                _utcnow().isoformat(),
+            ),
+        )
+        appointment = _appointment_row(db, cursor.lastrowid, current_user["id"])
+        reminders_created = _schedule_reminders(db, appointment)
+    result = _appointment_json(appointment)
+    result["reminders_created"] = reminders_created
+    return result
+
+
+@app.patch("/api/workflows/appointments/{appointment_id}")
+async def update_appointment_status(
+    appointment_id: int,
+    request: Request,
+    body: AppointmentStatusInput,
+    current_user=Depends(get_current_user),
+):
+    _authenticated_write(request)
+    with _db() as db:
+        updated = db.execute(
+            "UPDATE appointments SET status = ? WHERE id = ? AND owner_user_id = ?",
+            (body.status, appointment_id, current_user["id"]),
+        ).rowcount
+        if not updated:
+            raise HTTPException(status_code=404, detail="Appointment not found.")
+        if body.status in ("cancelled", "completed"):
+            db.execute(
+                """UPDATE reminder_jobs SET status = 'cancelled'
+                   WHERE appointment_id = ? AND status IN ('pending', 'processing')""",
+                (appointment_id,),
+            )
+        appointment = _appointment_row(db, appointment_id, current_user["id"])
+    return _appointment_json(appointment)
+
+
+@app.post("/api/workflows/dispatch")
+async def dispatch_reminders_now(
+    request: Request, current_user=Depends(get_current_user)
+):
+    _authenticated_write(request)
+    # The dispatcher safely claims jobs across all tenants. It returns only counts,
+    # and never exposes another practice's data.
+    return dispatch_due_reminders()
+
+
+def _twiml(content: str) -> FastAPIResponse:
+    return FastAPIResponse(
+        content=f'<?xml version="1.0" encoding="UTF-8"?><Response>{content}</Response>',
+        media_type="application/xml",
+    )
+
+
+def _twilio_signature_is_valid(request: Request, form: dict) -> bool:
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not auth_token:
+        return not IS_PRODUCTION
+    url = str(request.url)
+    payload = url + "".join(key + str(form[key]) for key in sorted(form))
+    expected = base64.b64encode(
+        hmac.new(auth_token.encode(), payload.encode(), hashlib.sha1).digest()
+    ).decode()
+    return hmac.compare_digest(signature, expected)
+
+
+@app.post("/webhooks/twilio/inbound-call")
+async def inbound_call(request: Request):
+    form_data = dict(await request.form())
+    if not _twilio_signature_is_valid(request, form_data):
+        raise HTTPException(status_code=403, detail="Invalid provider signature.")
+    speech = str(form_data.get("SpeechResult", "")).lower()
+    digits = str(form_data.get("Digits", ""))
+    caller = str(form_data.get("From", ""))
+    wants_front_desk = digits == "0" or any(keyword in speech for keyword in FRONT_DESK_KEYWORDS)
+    with _db() as db:
+        db.execute(
+            """INSERT INTO communication_events
+               (channel, direction, outcome, detail, created_at)
+               VALUES ('voice', 'inbound', ?, ?, ?)""",
+            (
+                "front_desk_handoff" if wants_front_desk else "automated_triage",
+                speech[:500], _utcnow().isoformat(),
+            ),
+        )
+        if wants_front_desk:
+            db.execute(
+                """INSERT INTO call_handoffs(caller_phone_encrypted, reason, status, created_at)
+                   VALUES (?, ?, 'queued', ?)""",
+                (_encrypt_optional(caller), (speech or "Caller pressed zero")[:500], _utcnow().isoformat()),
+            )
+    if wants_front_desk:
+        number = os.getenv("FRONT_DESK_PHONE_NUMBER")
+        if number:
+            safe_number = html.escape(number, quote=True)
+            return _twiml(
+                f"<Say>Please hold while I connect you to the front desk.</Say>"
+                f"<Dial>{safe_number}</Dial>"
+            )
+        return _twiml(
+            "<Say>The front desk is unavailable. Your request has been queued for a callback.</Say>"
+        )
+    if speech or digits:
+        return _twiml(
+            "<Say>I can help with appointment reminders. For scheduling changes, billing, "
+            "insurance, records, or a manager, please say front desk or press zero.</Say>"
+            "<Redirect method=\"POST\">/webhooks/twilio/inbound-call</Redirect>"
+        )
+    return _twiml(
+        '<Gather input="speech dtmf" numDigits="1" timeout="5" '
+        'action="/webhooks/twilio/inbound-call" method="POST">'
+        "<Say>Thank you for calling. Tell me how I can help. "
+        "For the front desk, press zero at any time.</Say></Gather>"
+        "<Redirect method=\"POST\">/webhooks/twilio/inbound-call</Redirect>"
+    )
+
+
+@app.post("/webhooks/twilio/reminder-voice")
+async def reminder_voice(request: Request, appointment_id: int):
+    form_data = dict(await request.form())
+    if not _twilio_signature_is_valid(request, form_data):
+        raise HTTPException(status_code=403, detail="Invalid provider signature.")
+    with _db() as db:
+        appointment = db.execute(
+            """SELECT appointments.*, patients.name_encrypted, patients.phone_encrypted,
+                      patients.email_encrypted
+               FROM appointments JOIN patients ON patients.id = appointments.patient_id
+               WHERE appointments.id = ?""",
+            (appointment_id,),
+        ).fetchone()
+    if not appointment:
+        return _twiml("<Say>This reminder is no longer available.</Say>")
+    _, message = _reminder_copy(appointment, "voice")
+    return _twiml(f"<Say>{html.escape(message)}</Say>")
+
+
+async def _reminder_scheduler() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(dispatch_due_reminders)
+        except Exception:
+            logger.exception("Reminder scheduler iteration failed")
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def start_reminder_scheduler():
+    if os.getenv("WORKFLOW_SCHEDULER_ENABLED", "true").lower() == "true":
+        app.state.reminder_scheduler_task = asyncio.create_task(_reminder_scheduler())
+
+
+@app.on_event("shutdown")
+async def stop_reminder_scheduler():
+    task = getattr(app.state, "reminder_scheduler_task", None)
+    if task:
+        task.cancel()
 
 
 class NoteInput(BaseModel):

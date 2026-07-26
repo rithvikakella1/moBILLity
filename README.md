@@ -1,7 +1,49 @@
-# moBILLity – AI Medical Code Extractor
+# moBILLity – Clinical Workflow Automation
 
-AI-powered ICD-10, CPT, and HCPCS extraction from clinical notes, built with
-FastAPI and OpenAI.
+FastAPI-based clinical operations platform with AI-powered ICD-10, CPT, and
+HCPCS extraction plus consent-aware appointment outreach.
+
+## Workflow Hub
+
+The authenticated `/workflows` area supports:
+
+- encrypted patient contact details and per-channel consent
+- appointments with SMS, voice, and email reminders queued exactly seven days
+  before the visit
+- an in-process dispatcher with retry-safe job claiming and an audit trail
+- a Twilio-compatible inbound voice webhook that hands billing, insurance,
+  medical-record, referral, complaint, manager, and other front-desk requests
+  to staff
+- preview delivery by default, so local development never contacts patients
+
+Set a stable `ENCRYPTION_KEY` before storing patient data. It must be a
+base64-encoded 32-byte value and is mandatory in production.
+
+For live email, use the SMTP settings below and set:
+
+```bash
+COMMUNICATION_DELIVERY_MODE=live
+PRACTICE_NAME="Example Health"
+```
+
+For live SMS, outbound voice reminders, and inbound calls, also set:
+
+```bash
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+15555550100
+FRONT_DESK_PHONE_NUMBER=+15555550101
+```
+
+Configure the Twilio number's incoming voice webhook as:
+
+```text
+POST https://your-domain.example/webhooks/twilio/inbound-call
+```
+
+`WORKFLOW_SCHEDULER_ENABLED=true` runs the due-job dispatcher once per minute
+(the default). For horizontally scaled production deployments, run the
+dispatcher in one dedicated worker rather than in every web process.
 
 ## Local setup
 
@@ -83,3 +125,4 @@ Do not commit these values. `.env`, SQLite databases, and the legacy
 | `/login` | Sign in |
 | `/forgot-password` | Request a reset link |
 | `/app` | Code extractor (requires authentication) |
+| `/workflows` | Patient outreach and appointment workflow hub (requires authentication) |
