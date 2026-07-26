@@ -1,0 +1,12 @@
+:root{--navy:#0a1628;--teal:#00c2a8;--cream:#f5f2ec;--muted:#667085;--white:#fff;--border:rgba(10,22,40,.12);--error:#c62828;--success:#087f5b}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:32px 18px;display:grid;place-items:center;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--navy);background:radial-gradient(circle at 75% 15%,rgba(0,194,168,.14),transparent 35%),var(--cream)}
+.wrap{width:min(440px,100%)}.logo{display:block;margin:0 0 24px;text-align:center;color:var(--navy);text-decoration:none;font:34px Georgia,serif}.logo span{color:var(--teal)}
+.card{padding:34px;background:var(--white);border:1px solid var(--border);border-radius:22px;box-shadow:0 20px 60px rgba(10,22,40,.1)}h1{margin:0 0 8px;font:34px Georgia,serif}p{color:var(--muted);line-height:1.55}.intro{margin:0 0 26px}
+label{display:block;margin:16px 0 7px;font-size:13px;font-weight:700}.input{width:100%;padding:13px 14px;border:1px solid var(--border);border-radius:11px;font:inherit}.input:focus{outline:3px solid rgba(0,194,168,.15);border-color:var(--teal)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:16px}.link{color:#087f6b;font-weight:650;text-decoration:none;font-size:14px}.link:hover{text-decoration:underline}
+.button,.google{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;margin-top:20px;padding:13px;border-radius:999px;font:700 15px inherit;cursor:pointer;text-decoration:none}
+.button{border:0;background:var(--navy);color:white}.button:hover{background:#12305a}.button:disabled{opacity:.55;cursor:wait}.google{border:1px solid var(--border);background:white;color:var(--navy)}.google:hover{border-color:var(--teal)}
+.divider{display:flex;align-items:center;gap:12px;margin:22px 0;color:#98a2b3;font-size:12px}.divider:before,.divider:after{content:"";height:1px;flex:1;background:var(--border)}
+.alert{display:none;margin:0 0 18px;padding:11px 13px;border-radius:10px;font-size:14px;line-height:1.4}.alert.show{display:block}.alert.error{background:#fff0f0;color:var(--error)}.alert.success{background:#e9fbf5;color:var(--success)}
+.fine{margin:22px 0 0;font-size:12px;text-align:center}.footer{text-align:center;margin-top:20px;font-size:14px}.requirements{font-size:12px;margin:7px 0 0}.google-mark{font-weight:800;color:#4285f4}
+@media(max-width:500px){.card{padding:26px 22px}.row{align-items:flex-start;flex-direction:column;gap:5px}}

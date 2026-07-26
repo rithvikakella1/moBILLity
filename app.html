@@ -684,7 +684,6 @@
     <a class="nav-logo" href="/">mo<span>BILL</span>ity</a>
     <ul class="nav-links">
       <li><a href="/">Home</a></li>
-      <li><a href="/#features">Features</a></li>
       <li><a href="/#compliance">Compliance</a></li>
       <li><a href="/" class="nav-back">← Back to Home</a></li>
     </ul>
@@ -760,34 +759,28 @@
     // ── AUTH GUARD ────────────────────────────────────────────────────────────
     const API_BASE = window.location.origin;
 
-    function isTokenValid(token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        return payload.exp * 1000 > Date.now();
-      } catch { return false; }
+    function getCookie(name) {
+      return document.cookie.split('; ').find(row => row.startsWith(name + '='))?.split('=')[1] || '';
     }
 
-    function getToken() {
-      return localStorage.getItem('auth_token');
-    }
-
-    function logout() {
-      localStorage.removeItem('auth_token');
+    async function logout() {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': decodeURIComponent(getCookie('mobillity_csrf')) },
+      }).catch(() => {});
       window.location.href = '/login';
     }
 
-    (function guardPage() {
-      const token = getToken();
-      if (!token || !isTokenValid(token)) {
-        window.location.href = '/login';
-        return;
-      }
-      // Show username from JWT payload
+    (async function guardPage() {
       try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
+        const response = await fetch('/api/me');
+        if (!response.ok) throw new Error();
+        const user = await response.json();
         const el = document.getElementById('navUsername');
-        if (el) el.textContent = payload.full_name || payload.sub;
-      } catch {}
+        if (el) el.textContent = user.full_name || user.email;
+      } catch {
+        window.location.href = '/login';
+      }
     })();
 
     // ── SPEECH TO TEXT ────────────────────────────────────────────────────────
@@ -916,13 +909,11 @@
         progressFill.style.width = prog + '%';
       }, 300);
 
-      const token = getToken();
-
       fetch(`${API_BASE}/api/extract`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'X-CSRF-Token': decodeURIComponent(getCookie('mobillity_csrf')),
         },
         body: JSON.stringify({ note }),
       })

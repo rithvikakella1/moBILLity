@@ -7,3 +7,7 @@ slowapi
 python-jose[cryptography]
 bcrypt
 cryptography
+authlib
+email-validator
+httpx
+itsdangerous

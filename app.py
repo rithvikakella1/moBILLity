@@ -3,7 +3,12 @@ import json
 import re
 import base64
 import secrets
+import hashlib
+import logging
+import smtplib
+import sqlite3
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -12,12 +17,14 @@ load_dotenv()  # loads .env before any os.getenv() calls
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from openai import OpenAI
-from fastapi import FastAPI, HTTPException, Depends, Request, status
+from authlib.integrations.starlette_client import OAuth, OAuthError
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+from starlette.middleware.sessions import SessionMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -26,9 +33,19 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 
 # ── SECURITY CONFIG ──────────────────────────────────────────────────────────
+logger = logging.getLogger("mobillity.auth")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
 SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_hex(32)
+SESSION_SECRET = os.getenv("SESSION_SECRET_KEY") or secrets.token_hex(32)
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+ACTION_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACTION_TOKEN_EXPIRE_MINUTES", "60"))
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", str(IS_PRODUCTION)).lower() == "true"
+
+if IS_PRODUCTION and (not os.getenv("JWT_SECRET_KEY") or not os.getenv("SESSION_SECRET_KEY")):
+    raise RuntimeError("JWT_SECRET_KEY and SESSION_SECRET_KEY are required in production.")
 
 _enc_env = os.getenv("ENCRYPTION_KEY", "")
 if _enc_env:
@@ -37,30 +54,45 @@ if _enc_env:
 else:
     ENCRYPTION_KEY = secrets.token_bytes(32)
 
-# ── USER STORE (file-based) ───────────────────────────────────────────────────
-USERS_FILE = os.path.join(BASE_DIR, "users.json")
+# ── USER STORE (SQLite) ───────────────────────────────────────────────────────
+DATABASE_FILE = os.getenv("DATABASE_FILE", os.path.join(BASE_DIR, "users.db"))
 
-def _load_users() -> dict:
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    return {}
+def _db() -> sqlite3.Connection:
+    connection = sqlite3.connect(DATABASE_FILE)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
 
-def _save_users(users: dict) -> None:
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+def _init_db() -> None:
+    with _db() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT,
+                full_name TEXT NOT NULL DEFAULT '',
+                google_sub TEXT UNIQUE,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                session_version INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS action_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                purpose TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_action_tokens_lookup ON action_tokens(token_hash, purpose)")
 
-_users = _load_users()
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "haiven2025")
-if ADMIN_USERNAME not in _users:
-    _users[ADMIN_USERNAME] = {
-        "hash": bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode(),
-        "full_name": "Admin",
-    }
-    _save_users(_users)
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
+_init_db()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token", auto_error=False)
 
 # ── RATE LIMITER ─────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
@@ -69,13 +101,20 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    https_only=COOKIE_SECURE,
+    same_site="lax",
+    max_age=600,
+)
 
 if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[APP_BASE_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,13 +143,24 @@ def aes_decrypt(token: str) -> str:
     nonce, ct = raw[:12], raw[12:]
     return AESGCM(ENCRYPTION_KEY).decrypt(nonce, ct, None).decode()
 
-# ── JWT AUTH ──────────────────────────────────────────────────────────────────
-def authenticate_user(username: str, password: str) -> bool:
-    users = _load_users()
-    user = users.get(username)
-    if not user:
-        return False
-    return bcrypt.checkpw(password.encode(), user["hash"].encode())
+# ── AUTH HELPERS ──────────────────────────────────────────────────────────────
+DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"not-a-real-password", bcrypt.gensalt()).decode()
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+def _password_is_valid(password: str) -> bool:
+    return 12 <= len(password) <= 128
+
+def _authenticate_user(email: str, password: str):
+    with _db() as db:
+        user = db.execute("SELECT * FROM users WHERE email = ?", (_normalize_email(email),)).fetchone()
+    password_hash = user["password_hash"] if user and user["password_hash"] else DUMMY_PASSWORD_HASH
+    valid = bcrypt.checkpw(password.encode(), password_hash.encode())
+    return user if user and valid else None
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -118,20 +168,131 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
+def _set_auth_cookies(response: Response, user) -> None:
+    csrf_token = secrets.token_urlsafe(32)
+    token = create_access_token(
+        {
+            "sub": str(user["id"]),
+            "email": user["email"],
+            "full_name": user["full_name"],
+            "sv": user["session_version"],
+        },
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    response.set_cookie(
+        "mobillity_session", token, max_age=max_age, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    response.set_cookie(
+        "mobillity_csrf", csrf_token, max_age=max_age, httponly=False,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+
+def _clear_auth_cookies(response: Response) -> None:
+    response.delete_cookie("mobillity_session", path="/")
+    response.delete_cookie("mobillity_csrf", path="/")
+
+def _require_csrf(request: Request) -> None:
+    cookie_token = request.cookies.get("mobillity_csrf")
+    header_token = request.headers.get("X-CSRF-Token")
+    if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+
+async def get_current_user(request: Request, token: Optional[str] = Depends(oauth2_scheme)):
     exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if not username:
+        encoded = token or request.cookies.get("mobillity_session")
+        if not encoded:
             raise exc
-        return username
+        payload = jwt.decode(encoded, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub", ""))
+        with _db() as db:
+            user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user or payload.get("sv") != user["session_version"]:
+            raise exc
+        return user
     except JWTError:
         raise exc
+    except (TypeError, ValueError):
+        raise exc
+
+def _create_action_token(user_id: int, purpose: str) -> str:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = _utcnow() + timedelta(minutes=ACTION_TOKEN_EXPIRE_MINUTES)
+    with _db() as db:
+        db.execute(
+            "UPDATE action_tokens SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL",
+            (_utcnow().isoformat(), user_id, purpose),
+        )
+        db.execute(
+            "INSERT INTO action_tokens(user_id, purpose, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, purpose, token_hash, expires_at.isoformat(), _utcnow().isoformat()),
+        )
+    return raw_token
+
+def _consume_action_token(raw_token: str, purpose: str):
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    with _db() as db:
+        row = db.execute(
+            """SELECT action_tokens.id AS token_id, action_tokens.expires_at, action_tokens.used_at,
+                      users.*
+               FROM action_tokens JOIN users ON users.id = action_tokens.user_id
+               WHERE action_tokens.token_hash = ? AND action_tokens.purpose = ?""",
+            (token_hash, purpose),
+        ).fetchone()
+        if not row or row["used_at"] or datetime.fromisoformat(row["expires_at"]) <= _utcnow():
+            return None
+        db.execute("UPDATE action_tokens SET used_at = ? WHERE id = ?", (_utcnow().isoformat(), row["token_id"]))
+    return row
+
+def _send_email(to_email: str, subject: str, body: str) -> None:
+    smtp_host = os.getenv("SMTP_HOST")
+    if not smtp_host:
+        if os.getenv("AUTH_DEV_SHOW_LINKS", "false").lower() == "true" and not IS_PRODUCTION:
+            logger.warning("Development auth email for %s: %s", to_email, body)
+            return
+        raise RuntimeError("Email delivery is not configured.")
+
+    message = EmailMessage()
+    message["From"] = os.getenv("SMTP_FROM", "no-reply@mobillity.local")
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(body)
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+        if os.getenv("SMTP_STARTTLS", "true").lower() == "true":
+            smtp.starttls()
+        if os.getenv("SMTP_USERNAME"):
+            smtp.login(os.environ["SMTP_USERNAME"], os.environ["SMTP_PASSWORD"])
+        smtp.send_message(message)
+
+def _send_verification_email(user) -> None:
+    token = _create_action_token(user["id"], "verify_email")
+    link = f"{APP_BASE_URL}/verify-email?token={token}"
+    _send_email(user["email"], "Verify your moBILLity email", f"Verify your email within one hour:\n\n{link}")
+
+def _send_reset_email(user) -> None:
+    token = _create_action_token(user["id"], "reset_password")
+    link = f"{APP_BASE_URL}/reset-password?token={token}"
+    _send_email(user["email"], "Reset your moBILLity password", f"Reset your password within one hour:\n\n{link}\n\nIf you did not request this, ignore this email.")
+
+# Google OpenID Connect. Google accounts are considered email-verified only when
+# Google's signed ID token includes email_verified=true.
+oauth = OAuth()
+if os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"):
+    oauth.register(
+        name="google",
+        client_id=os.environ["GOOGLE_CLIENT_ID"],
+        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 # ── OPENAI CLIENT ─────────────────────────────────────────────────────────────
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -281,6 +442,7 @@ def extract_medical_codes(note: str) -> dict:
     return _parse_llm_response(response.choices[0].message.content)
 
 
+
 # ── PAGE ROUTES ───────────────────────────────────────────────────────────────
 def _serve(filename: str) -> str:
     with open(os.path.join(BASE_DIR, filename), "r", encoding="utf-8") as f:
@@ -297,6 +459,8 @@ async def serve_app():
     return _serve("app.html")
 
 
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def serve_login():
     return _serve("login.html")
@@ -305,6 +469,18 @@ async def serve_login():
 @app.get("/signup", response_class=HTMLResponse)
 async def serve_signup():
     return _serve("signup.html")
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def serve_forgot_password():
+    return _serve("forgot-password.html")
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def serve_reset_password():
+    return _serve("reset-password.html")
+
+@app.get("/verify-email", response_class=HTMLResponse)
+async def serve_verify_email():
+    return _serve("verify-email.html")
 
 
 # ── API ROUTES ────────────────────────────────────────────────────────────────
@@ -315,24 +491,22 @@ def health():
 
 @app.post("/api/token")
 @limiter.limit("5/minute")
-async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
-    if not authenticate_user(form_data.username, form_data.password):
+async def login(response: Response, request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+    user = _authenticate_user(form_data.username, form_data.password)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Invalid email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    users = _load_users()
-    full_name = users.get(form_data.username, {}).get("full_name", "") or form_data.username
-    token = create_access_token(
-        data={"sub": form_data.username, "full_name": full_name},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    return {"access_token": token, "token_type": "bearer"}
+    if not user["email_verified"]:
+        raise HTTPException(status_code=403, detail="Verify your email before signing in.")
+    _set_auth_cookies(response, user)
+    return {"message": "Signed in.", "user": {"email": user["email"], "full_name": user["full_name"]}}
 
 
 class RegisterInput(BaseModel):
-    username: str
+    email: EmailStr
     password: str
     full_name: Optional[str] = None
 
@@ -340,22 +514,157 @@ class RegisterInput(BaseModel):
 @app.post("/api/register", status_code=201)
 @limiter.limit("3/minute")
 async def register(request: Request, body: RegisterInput):
-    import re as _re
-    if not _re.match(r'^[A-Za-z0-9_]{3,32}$', body.username):
-        raise HTTPException(status_code=400, detail="Username must be 3–32 characters (letters, numbers, underscores).")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if not _password_is_valid(body.password):
+        raise HTTPException(status_code=400, detail="Password must be between 12 and 128 characters.")
 
-    users = _load_users()
-    if body.username in users:
-        raise HTTPException(status_code=409, detail="Username already taken.")
+    email = _normalize_email(str(body.email))
+    with _db() as db:
+        existing = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        if existing:
+            if not existing["email_verified"] and existing["password_hash"]:
+                try:
+                    _send_verification_email(existing)
+                except RuntimeError:
+                    logger.exception("Could not resend verification email")
+            return {"message": "If this email can be registered, a verification message has been sent."}
+        cursor = db.execute(
+            """INSERT INTO users(email, password_hash, full_name, email_verified, created_at)
+               VALUES (?, ?, ?, 0, ?)""",
+            (
+                email,
+                bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode(),
+                (body.full_name or "").strip()[:120],
+                _utcnow().isoformat(),
+            ),
+        )
+        user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    try:
+        _send_verification_email(user)
+    except RuntimeError as exc:
+        logger.exception("Could not send verification email")
+        raise HTTPException(status_code=503, detail="Account created, but email delivery is unavailable. Contact support.") from exc
+    return {"message": "Check your email to verify your account before signing in."}
 
-    users[body.username] = {
-        "hash": bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode(),
-        "full_name": body.full_name or "",
-    }
-    _save_users(users)
-    return {"message": "Account created successfully."}
+
+class EmailInput(BaseModel):
+    email: EmailStr
+
+@app.post("/api/resend-verification")
+@limiter.limit("3/hour")
+async def resend_verification(request: Request, body: EmailInput):
+    with _db() as db:
+        user = db.execute("SELECT * FROM users WHERE email = ?", (_normalize_email(str(body.email)),)).fetchone()
+    if user and not user["email_verified"]:
+        try:
+            _send_verification_email(user)
+        except RuntimeError:
+            logger.exception("Could not send verification email")
+    return {"message": "If an unverified account exists, a verification message has been sent."}
+
+@app.post("/api/verify-email")
+@limiter.limit("10/hour")
+async def verify_email(request: Request, body: dict):
+    raw_token = str(body.get("token", ""))
+    user = _consume_action_token(raw_token, "verify_email")
+    if not user:
+        raise HTTPException(status_code=400, detail="This verification link is invalid or expired.")
+    with _db() as db:
+        db.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (user["id"],))
+    return {"message": "Email verified. You can now sign in."}
+
+@app.post("/api/forgot-password")
+@limiter.limit("3/hour")
+async def forgot_password(request: Request, body: EmailInput):
+    with _db() as db:
+        user = db.execute("SELECT * FROM users WHERE email = ?", (_normalize_email(str(body.email)),)).fetchone()
+    if user and user["password_hash"]:
+        try:
+            _send_reset_email(user)
+        except RuntimeError:
+            logger.exception("Could not send password reset email")
+    return {"message": "If an account exists for that email, a password reset link has been sent."}
+
+class ResetPasswordInput(BaseModel):
+    token: str
+    password: str
+
+@app.post("/api/reset-password")
+@limiter.limit("5/hour")
+async def reset_password(request: Request, body: ResetPasswordInput):
+    if not _password_is_valid(body.password):
+        raise HTTPException(status_code=400, detail="Password must be between 12 and 128 characters.")
+    user = _consume_action_token(body.token, "reset_password")
+    if not user:
+        raise HTTPException(status_code=400, detail="This password reset link is invalid or expired.")
+    password_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    with _db() as db:
+        db.execute(
+            "UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?",
+            (password_hash, user["id"]),
+        )
+        db.execute(
+            "UPDATE action_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+            (_utcnow().isoformat(), user["id"]),
+        )
+    try:
+        _send_email(user["email"], "Your moBILLity password was changed", "Your password was changed. If this was not you, contact support immediately.")
+    except RuntimeError:
+        logger.exception("Could not send password change notification")
+    return {"message": "Password updated. Sign in with your new password."}
+
+@app.get("/auth/google")
+@limiter.limit("20/hour")
+async def google_login(request: Request):
+    if not getattr(oauth, "google", None):
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured.")
+    redirect_uri = f"{APP_BASE_URL}/auth/google/callback"
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+@app.get("/auth/google/callback")
+async def google_callback(request: Request):
+    if not getattr(oauth, "google", None):
+        return RedirectResponse("/login?error=google_unavailable", status_code=303)
+    try:
+        token = await oauth.google.authorize_access_token(request)
+        info = token.get("userinfo") or await oauth.google.userinfo(token=token)
+    except OAuthError:
+        logger.exception("Google OAuth failed")
+        return RedirectResponse("/login?error=google_failed", status_code=303)
+    if not info.get("sub") or not info.get("email") or not info.get("email_verified"):
+        return RedirectResponse("/login?error=google_unverified", status_code=303)
+
+    email = _normalize_email(info["email"])
+    with _db() as db:
+        user = db.execute("SELECT * FROM users WHERE google_sub = ? OR email = ?", (info["sub"], email)).fetchone()
+        if user:
+            if user["google_sub"] and user["google_sub"] != info["sub"]:
+                return RedirectResponse("/login?error=account_conflict", status_code=303)
+            db.execute(
+                "UPDATE users SET google_sub = ?, email_verified = 1, full_name = COALESCE(NULLIF(full_name, ''), ?) WHERE id = ?",
+                (info["sub"], str(info.get("name", ""))[:120], user["id"]),
+            )
+            user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        else:
+            cursor = db.execute(
+                """INSERT INTO users(email, full_name, google_sub, email_verified, created_at)
+                   VALUES (?, ?, ?, 1, ?)""",
+                (email, str(info.get("name", ""))[:120], info["sub"], _utcnow().isoformat()),
+            )
+            user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    response = RedirectResponse("/app", status_code=303)
+    _set_auth_cookies(response, user)
+    return response
+
+@app.get("/api/me")
+async def me(current_user=Depends(get_current_user)):
+    return {"email": current_user["email"], "full_name": current_user["full_name"]}
+
+@app.post("/api/logout")
+async def logout(request: Request, response: Response):
+    _require_csrf(request)
+    _clear_auth_cookies(response)
+    return {"message": "Signed out."}
+
 
 
 class NoteInput(BaseModel):
@@ -367,8 +676,10 @@ class NoteInput(BaseModel):
 async def api_extract(
     request: Request,
     input: NoteInput,
-    current_user: str = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    if request.cookies.get("mobillity_session"):
+        _require_csrf(request)
     if not input.note.strip():
         raise HTTPException(status_code=400, detail="No clinical note provided.")
     try:

@@ -1,96 +1,85 @@
-# MoBILLity – AI Medical Code Extractor
+# moBILLity – AI Medical Code Extractor
 
-AI-powered ICD-10 and CPT code extraction from clinical notes, built with FastAPI and GPT-4o-mini.
+AI-powered ICD-10, CPT, and HCPCS extraction from clinical notes, built with
+FastAPI and OpenAI.
 
-## Prerequisites
+## Local setup
 
-- Python 3.9+
-- An OpenAI API key
-
----
-
-## Setup (fresh machine)
-
-### 1. Clone the repo
-```bash
-git clone <your-repo-url>
-cd New-Idea
-```
-
-### 2. Create a virtual environment
 ```bash
 python -m venv .venv
-```
-
-### 3. Activate it
-
-**Windows:**
-```bash
-.venv\Scripts\activate
-```
-
-**Mac/Linux:**
-```bash
 source .venv/bin/activate
-```
-
-### 4. Install dependencies
-```bash
 pip install -r requirements.txt
-```
-
-### 5. Create your `.env` file
-
-Create a file called `.env` in the project root with the following:
-
-```
-OPENAI_API_KEY=sk-your-key-here
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=choose-a-password
-JWT_SECRET_KEY=any-long-random-string
-```
-
-- `OPENAI_API_KEY` — required, get it from platform.openai.com
-- `ADMIN_USERNAME` / `ADMIN_PASSWORD` — the first admin account (seeded automatically on first run)
-- `JWT_SECRET_KEY` — any long random string, used to sign login tokens
-
-### 6. Run the server
-```bash
+export OPENAI_API_KEY="..."
+export AUTH_DEV_SHOW_LINKS=true
 uvicorn app:app --reload
 ```
 
-### 7. Open in browser
-```
-http://localhost:8000
+Open `http://localhost:8000`. In local development,
+`AUTH_DEV_SHOW_LINKS=true` writes verification and password-reset links to the
+server log. Never enable that option in production.
+
+## Authentication
+
+Accounts are stored in SQLite (`users.db` by default). Password accounts must
+verify their email before signing in. Google accounts rely on Google's verified
+email claim.
+
+Set these values in production:
+
+```bash
+ENVIRONMENT=production
+APP_BASE_URL=https://your-domain.example
+JWT_SECRET_KEY=<at-least-32-random-bytes>
+SESSION_SECRET_KEY=<a-different-random-value>
+COOKIE_SECURE=true
 ```
 
----
+Configure SMTP for verification and password-reset messages:
+
+```bash
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_USERNAME=...
+SMTP_PASSWORD=...
+SMTP_FROM=no-reply@your-domain.example
+```
+
+For Google sign-in, create a Google OAuth **Web application** client and add
+this exact authorized redirect URI:
+
+```text
+https://your-domain.example/auth/google/callback
+```
+
+Then set:
+
+```bash
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+Do not commit these values. `.env`, SQLite databases, and the legacy
+`users.json` file are ignored by Git.
+
+### Security controls
+
+- bcrypt password hashing and a 12-character minimum
+- verified email required for non-Google accounts
+- single-use, one-hour email verification and password-reset tokens
+- generic password-reset responses to reduce account enumeration
+- rate limits on login, registration, verification, recovery, and extraction
+- `HttpOnly`, `SameSite=Lax`, secure-in-production session cookies
+- CSRF tokens on authenticated write requests
+- all sessions invalidated when a password is reset
+- HSTS, clickjacking, MIME-sniffing, referrer, and no-store headers
 
 ## Pages
 
 | URL | Description |
 |---|---|
-| `http://localhost:8000` | Landing page |
-| `http://localhost:8000/signup` | Create an account |
-| `http://localhost:8000/login` | Sign in |
-| `http://localhost:8000/app` | Code extractor (requires login) |
-
----
-
-## Features
-
-- **AI code extraction** — ICD-10-CM and CPT codes from free-text clinical notes
-- **Physician billing prompt** — codes extracted with billing priority, confidence scores, and documentation strength ratings
-- **Suggested codes** — additional codes flagged for physician review
-- **Speech-to-text** — dictate clinical notes directly (Chrome/Edge)
-- **Authentication** — JWT-based login with bcrypt password hashing
-- **Rate limiting** — 10 req/min on extraction, 5 req/min on login, 3 req/min on registration
-- **HIPAA-aligned security** — AES-256-GCM encryption utilities, HSTS headers, `Cache-Control: no-store`
-
----
-
-## Notes
-
-- `.env` is gitignored — never commit your API key
-- User accounts are stored in `users.json` (also gitignored — add it if you haven't)
-- The admin account from `.env` is seeded automatically on first run
+| `/` | Landing page |
+| `/signup` | Create an account |
+| `/login` | Sign in |
+| `/forgot-password` | Request a reset link |
+| `/app` | Code extractor (requires authentication) |
