@@ -45,6 +45,17 @@ SMTP_PASSWORD=...
 SMTP_FROM=no-reply@your-domain.example
 ```
 
+On hosts that block SMTP ports, configure Brevo's HTTPS transactional email API
+instead:
+
+```bash
+BREVO_API_KEY=...
+BREVO_FROM_EMAIL=your-verified-sender@example.com
+BREVO_FROM_NAME=moBILLity
+```
+
+When `BREVO_API_KEY` is set, the HTTPS email API is preferred over SMTP.
+
 For Google sign-in, create a Google OAuth **Web application** client and add
 this exact authorized redirect URI:
 

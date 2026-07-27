@@ -18,12 +18,12 @@
   </section>
   <p class="footer">New here? <a class="link" href="/signup">Create an account</a></p>
 </main><script>
-const alertBox=document.querySelector('#alert'),button=document.querySelector('#submit');
+const alertBox=document.querySelector('#alert'),button=document.querySelector('#submit');async function payload(r){const t=await r.text();try{return JSON.parse(t)}catch{return{detail:r.ok?'Unexpected server response.':'The server could not complete the request. Please try again.'}}}
 function show(message,type='error'){alertBox.textContent=message;alertBox.className=`alert show ${type}`}
 const errors={google_failed:'Google sign-in was cancelled or failed.',google_unavailable:'Google sign-in is not configured yet.',google_unverified:'Google did not provide a verified email.',account_conflict:'That email is linked to another Google account.'};
 const error=new URLSearchParams(location.search).get('error');if(error)show(errors[error]||'Sign-in failed.');
 document.querySelector('#form').addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;alertBox.className='alert';
  const body=new URLSearchParams({username:document.querySelector('#email').value.trim(),password:document.querySelector('#password').value});
- try{const response=await fetch('/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Sign-in failed.');location.href='/app'}
+ try{const response=await fetch('/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const data=await payload(response);if(!response.ok)throw new Error(data.detail||'Sign-in failed.');location.href='/app'}
  catch(err){show(err.message);button.disabled=false}});
 </script></body></html>

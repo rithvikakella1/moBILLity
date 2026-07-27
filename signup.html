@@ -19,8 +19,8 @@
   </section>
   <p class="footer">Already registered? <a class="link" href="/login">Sign in</a></p>
 </main><script>
-const alertBox=document.querySelector('#alert'),button=document.querySelector('#submit');function show(m,t='error'){alertBox.textContent=m;alertBox.className=`alert show ${t}`}
+const alertBox=document.querySelector('#alert'),button=document.querySelector('#submit');function show(m,t='error'){alertBox.textContent=m;alertBox.className=`alert show ${t}`}async function payload(r){const t=await r.text();try{return JSON.parse(t)}catch{return{detail:r.ok?'Unexpected server response.':'The server could not complete the request. Please try again.'}}}
 document.querySelector('#form').addEventListener('submit',async e=>{e.preventDefault();alertBox.className='alert';const password=document.querySelector('#password').value;if(password!==document.querySelector('#confirm').value)return show('Passwords do not match.');button.disabled=true;
- try{const response=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name:document.querySelector('#name').value.trim(),email:document.querySelector('#email').value.trim(),password})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Could not create account.');show(data.message,'success');document.querySelector('#form').reset()}
+ try{const response=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name:document.querySelector('#name').value.trim(),email:document.querySelector('#email').value.trim(),password})});const data=await payload(response);if(!response.ok)throw new Error(data.detail||'Could not create account.');show(data.message,'success');document.querySelector('#form').reset()}
  catch(err){show(err.message)}finally{button.disabled=false}});
 </script></body></html>

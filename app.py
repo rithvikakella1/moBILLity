@@ -29,6 +29,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import bcrypt
+import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 
@@ -252,6 +253,35 @@ def _consume_action_token(raw_token: str, purpose: str):
     return row
 
 def _send_email(to_email: str, subject: str, body: str) -> None:
+    brevo_api_key = os.getenv("BREVO_API_KEY")
+    if brevo_api_key:
+        from_email = os.getenv("BREVO_FROM_EMAIL") or os.getenv("SMTP_FROM")
+        if not from_email:
+            raise RuntimeError("BREVO_FROM_EMAIL is required when BREVO_API_KEY is configured.")
+        try:
+            response = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "accept": "application/json",
+                    "api-key": brevo_api_key,
+                    "content-type": "application/json",
+                },
+                json={
+                    "sender": {
+                        "name": os.getenv("BREVO_FROM_NAME", "moBILLity"),
+                        "email": from_email,
+                    },
+                    "to": [{"email": to_email}],
+                    "subject": subject,
+                    "textContent": body,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            return
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Email API request failed.") from exc
+
     smtp_host = os.getenv("SMTP_HOST")
     if not smtp_host:
         if os.getenv("AUTH_DEV_SHOW_LINKS", "false").lower() == "true" and not IS_PRODUCTION:
@@ -265,12 +295,15 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
     message["Subject"] = subject
     message.set_content(body)
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
-        if os.getenv("SMTP_STARTTLS", "true").lower() == "true":
-            smtp.starttls()
-        if os.getenv("SMTP_USERNAME"):
-            smtp.login(os.environ["SMTP_USERNAME"], os.environ["SMTP_PASSWORD"])
-        smtp.send_message(message)
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+            if os.getenv("SMTP_STARTTLS", "true").lower() == "true":
+                smtp.starttls()
+            if os.getenv("SMTP_USERNAME"):
+                smtp.login(os.environ["SMTP_USERNAME"], os.environ["SMTP_PASSWORD"])
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise RuntimeError("SMTP delivery failed.") from exc
 
 def _send_verification_email(user) -> None:
     token = _create_action_token(user["id"], "verify_email")

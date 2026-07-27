@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 os.environ["DATABASE_FILE"] = tempfile.mktemp(prefix="mobillity-test-", suffix=".db")
 os.environ["OPENAI_API_KEY"] = "test-key"
@@ -17,6 +18,7 @@ class AuthenticationFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.messages = []
+        cls.original_send_email = auth_app._send_email
         auth_app._send_email = lambda to, subject, body: cls.messages.append((to, subject, body))
         cls.client = TestClient(auth_app.app)
 
@@ -92,10 +94,37 @@ class AuthenticationFlowTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        auth_app._send_email = cls.original_send_email
         try:
             os.remove(os.environ["DATABASE_FILE"])
         except FileNotFoundError:
             pass
+
+
+class EmailDeliveryTests(unittest.TestCase):
+    @patch("app.httpx.post")
+    def test_brevo_api_is_preferred_over_smtp(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        post.return_value = response
+
+        with patch.dict(
+            os.environ,
+            {
+                "BREVO_API_KEY": "test-brevo-key",
+                "BREVO_FROM_EMAIL": "verified@example.com",
+                "SMTP_HOST": "blocked.example.com",
+            },
+            clear=False,
+        ):
+            auth_app._send_email("patient@example.com", "Verify", "Verification body")
+
+        post.assert_called_once()
+        request = post.call_args
+        self.assertEqual(request.args[0], "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(request.kwargs["headers"]["api-key"], "test-brevo-key")
+        self.assertEqual(request.kwargs["json"]["sender"]["email"], "verified@example.com")
+        self.assertEqual(request.kwargs["json"]["to"][0]["email"], "patient@example.com")
 
 
 if __name__ == "__main__":
