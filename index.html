@@ -576,6 +576,64 @@ nav {
       line-height: 1.65;
     }
 
+    /* ── AI CALLING ASSISTANT ── */
+    .calling {
+      padding: 7rem 6%;
+      background: var(--navy);
+      color: var(--white);
+      position: relative;
+      overflow: hidden;
+    }
+    .calling::before {
+      content: '';
+      position: absolute;
+      width: 520px;
+      height: 520px;
+      right: -180px;
+      top: -220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0,194,168,.22), transparent 68%);
+    }
+    .calling-layout {
+      max-width: 1160px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: .9fr 1.1fr;
+      gap: 5rem;
+      align-items: center;
+      position: relative;
+    }
+    .calling .section-title { color: var(--white); }
+    .calling .section-sub { color: #b7c2d0; }
+    .calling-points { display: grid; gap: 1rem; margin: 2rem 0 2.2rem; }
+    .calling-point { display: flex; gap: .9rem; align-items: flex-start; color: #dbe3eb; line-height: 1.5; }
+    .calling-check {
+      width: 24px; height: 24px; flex: 0 0 24px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: rgba(0,194,168,.16);
+      color: var(--teal-light);
+      font-weight: 700;
+    }
+    .call-console {
+      background: #fff;
+      color: var(--navy);
+      border-radius: 24px;
+      padding: 1.5rem;
+      box-shadow: 0 28px 80px rgba(0,0,0,.28);
+    }
+    .call-console-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.4rem; }
+    .call-status { display:flex; align-items:center; gap:.5rem; font-size:.78rem; font-weight:700; color:#087f6b; }
+    .call-status i { width:8px; height:8px; border-radius:50%; background:var(--teal); box-shadow:0 0 0 5px rgba(0,194,168,.12); }
+    .call-time { color:var(--text-light); font-size:.8rem; }
+    .call-transcript { display:grid; gap:.8rem; padding:1.2rem; border-radius:15px; background:var(--cream); }
+    .bubble { max-width:88%; padding:.8rem 1rem; border-radius:13px; font-size:.84rem; line-height:1.5; }
+    .bubble.patient { background:#fff; border:1px solid var(--border); }
+    .bubble.assistant { justify-self:end; background:var(--navy); color:#fff; }
+    .route-result { margin-top:1rem; padding:1rem; border:1px solid rgba(0,194,168,.28); background:rgba(0,194,168,.07); border-radius:13px; }
+    .route-result small { display:block; color:var(--text-light); text-transform:uppercase; letter-spacing:.08em; font-weight:700; margin-bottom:.35rem; }
+    .route-result strong { font-size:.9rem; }
+
     /* ── COMPLIANCE ── */
     .compliance {
       background: var(--navy);
@@ -834,6 +892,7 @@ nav {
       .stats { grid-template-columns: repeat(2,1fr); }
       footer { flex-direction: column; align-items: flex-start; }
       footer nav a:first-child { margin-left: 0; }
+      .calling-layout { grid-template-columns: 1fr; gap: 2.5rem; }
     }
   </style>
 </head>
@@ -845,6 +904,7 @@ nav {
     <ul class="nav-links">
       <li><a href="#how">How it works</a></li>
       <li><a href="#features">Features</a></li>
+      <li><a href="#calling">AI Calling</a></li>
       <li><a href="#compliance">Compliance</a></li>
       <li><a href="app.html" class="nav-cta">Launch App →</a></li>
     </ul>
@@ -902,6 +962,38 @@ nav {
             <div class="card-label" style="margin-top:1.1rem;">Suggested Codes <span class="label-sub">needs clarification</span></div>
             <div class="suggested-row" id="suggested-row"></div>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI CALLING ASSISTANT -->
+  <section class="calling" id="calling">
+    <div class="calling-layout">
+      <div class="reveal">
+        <span class="section-tag">AI Calling Assistant</span>
+        <h2 class="section-title">Every patient call gets a clear next step.</h2>
+        <p class="section-sub">Give patients a calm, always-available first point of contact. The assistant understands why they are calling, handles routine appointment questions, and routes sensitive requests to your team.</p>
+        <div class="calling-points">
+          <div class="calling-point"><span class="calling-check">✓</span><span>Understands natural-language requests without a maze of phone menus.</span></div>
+          <div class="calling-point"><span class="calling-check">✓</span><span>Escalates billing, insurance, records, referrals, complaints, and manager requests.</span></div>
+          <div class="calling-point"><span class="calling-check">✓</span><span>Keeps a consent-aware activity trail alongside appointment reminders.</span></div>
+        </div>
+        <a href="workflows.html" class="btn-primary">Open Workflow Hub →</a>
+      </div>
+      <div class="call-console reveal" aria-label="Example AI assistant call">
+        <div class="call-console-head">
+          <div class="call-status"><i></i> AI assistant on call</div>
+          <span class="call-time">00:24</span>
+        </div>
+        <div class="call-transcript">
+          <div class="bubble assistant">Thanks for calling Northstar Health. Tell me how I can help today.</div>
+          <div class="bubble patient">I have a question about a charge on my last statement.</div>
+          <div class="bubble assistant">I can connect you with the billing team. I’ll pass along the reason for your call so you don’t have to repeat it.</div>
+        </div>
+        <div class="route-result">
+          <small>Routing decision</small>
+          <strong>Billing question → Front desk handoff queued</strong>
         </div>
       </div>
     </div>

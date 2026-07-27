@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moBILLity — Clinical Workflow Hub</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--navy:#0a1628;--navy2:#102440;--teal:#00bfa6;--cream:#f5f2ec;--white:#fff;--muted:#667085;--border:#e5e2db;--amber:#f59e0b;--red:#ef4444;--green:#10b981}
+    *{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font-family:"DM Sans",sans-serif}
+    nav{height:68px;padding:0 4%;display:flex;align-items:center;gap:28px;background:rgba(245,242,236,.94);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5;backdrop-filter:blur(12px)}
+    .logo{font:1.5rem "DM Serif Display";text-decoration:none;color:var(--navy)}.logo span{color:var(--teal)}
+    .nav-link{font-size:.88rem;color:var(--muted);text-decoration:none}.nav-link.active{color:var(--navy);font-weight:700}
+    .nav-user{margin-left:auto;color:var(--muted);font-size:.82rem}.logout{border:1px solid var(--border);background:white;border-radius:999px;padding:8px 14px;margin-left:12px;cursor:pointer}
+    main{max-width:1240px;margin:auto;padding:38px 24px 70px}.eyebrow{color:var(--teal);font-weight:700;font-size:.75rem;letter-spacing:.12em;text-transform:uppercase}
+    h1{font:clamp(2rem,4vw,3.2rem) "DM Serif Display";letter-spacing:-.04em;margin:8px 0}.intro{color:var(--muted);max-width:670px;line-height:1.6;margin:0 0 28px}
+    .mode{display:inline-flex;gap:8px;align-items:center;background:#fff8e8;border:1px solid #f5d99d;color:#946200;border-radius:999px;padding:7px 11px;font-size:.76rem;font-weight:700}.dot{width:7px;height:7px;border-radius:50%;background:var(--amber)}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:26px 0}.stat,.panel{background:white;border:1px solid var(--border);border-radius:17px;box-shadow:0 8px 30px rgba(10,22,40,.045)}
+    .stat{padding:19px}.stat strong{display:block;font:1.9rem "DM Serif Display"}.stat span{color:var(--muted);font-size:.78rem}
+    .grid{display:grid;grid-template-columns:360px 1fr;gap:18px}.panel{padding:22px;margin-bottom:18px}.panel h2{font:1.35rem "DM Serif Display";margin:0 0 5px}.sub{font-size:.8rem;color:var(--muted);margin:0 0 18px;line-height:1.5}
+    label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:block;margin:13px 0 6px}
+    input,select{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:#fbfaf8;font:inherit;font-size:.88rem;color:var(--navy);outline:none}input:focus,select:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,191,166,.1)}
+    .checks{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.check{border:1px solid var(--border);border-radius:9px;padding:9px 5px;font-size:.75rem;text-align:center;background:#fbfaf8}.check input{width:auto;margin-right:3px}
+    button.primary{width:100%;border:0;border-radius:10px;padding:12px 14px;margin-top:16px;background:var(--navy);color:white;font-weight:700;cursor:pointer}button.primary:hover{background:var(--teal);color:var(--navy)}
+    .table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:.82rem}th{text-align:left;color:var(--muted);font-size:.67rem;text-transform:uppercase;letter-spacing:.07em;padding:9px;border-bottom:1px solid var(--border)}td{padding:12px 9px;border-bottom:1px solid #efede8;white-space:nowrap}
+    .badge{font-size:.67rem;font-weight:700;padding:4px 7px;border-radius:999px;background:#edf0f4}.badge.sent,.badge.confirmed{color:#087f5b;background:#e4f7ef}.badge.pending,.badge.processing{color:#946200;background:#fff4d6}.badge.failed,.badge.cancelled{color:#b42318;background:#feeceb}
+    .empty{text-align:center;padding:30px;color:var(--muted);font-size:.85rem}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.toast{position:fixed;right:24px;bottom:24px;padding:13px 16px;border-radius:10px;background:var(--navy);color:white;font-size:.84rem;box-shadow:0 8px 30px #0003;display:none}.toast.error{background:#a61b1b}
+    .callout{display:flex;gap:12px;background:var(--navy2);color:white;border-radius:14px;padding:17px;margin-bottom:18px}.callout b{display:block;margin-bottom:4px}.callout small{color:#bac5d3;line-height:1.4}.phone{font-size:1.4rem}
+    @media(max-width:850px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}nav .nav-link{display:none}}@media(max-width:480px){.stats{grid-template-columns:1fr}.row2{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="logo" href="index.html">mo<span>BILL</span>ity</a>
+    <a class="nav-link active" href="workflows.html">Workflow Hub</a>
+    <a class="nav-link" href="app.html">Code Extractor</a>
+    <div class="nav-user"><span id="username"></span><button class="logout" onclick="logout()">Sign out</button></div>
+  </nav>
+  <main>
+    <div class="eyebrow">Clinical operations</div>
+    <h1>Workflow <em>Hub</em></h1>
+    <p class="intro">Coordinate patient outreach from one queue. Consented patients receive appointment reminders exactly one week before their visit by text, phone, or email.</p>
+    <div class="mode"><span class="dot"></span><span id="deliveryMode">Preview delivery</span></div>
+    <section class="stats">
+      <div class="stat"><strong id="patientCount">0</strong><span>Patients</span></div>
+      <div class="stat"><strong id="appointmentCount">0</strong><span>Upcoming appointments</span></div>
+      <div class="stat"><strong id="pendingCount">0</strong><span>Reminders queued</span></div>
+      <div class="stat"><strong id="sentCount">0</strong><span>Messages sent</span></div>
+    </section>
+    <div class="grid">
+      <aside>
+        <section class="panel">
+          <h2>Add a patient</h2><p class="sub">Record explicit consent separately for each channel.</p>
+          <form id="patientForm">
+            <label for="name">Patient name</label><input id="name" required autocomplete="off">
+            <label for="phone">Phone</label><input id="phone" type="tel" placeholder="+1 555 555 0123">
+            <label for="email">Email</label><input id="email" type="email" placeholder="patient@example.com">
+            <label>Outreach consent</label>
+            <div class="checks">
+              <label class="check"><input id="smsConsent" type="checkbox">SMS</label>
+              <label class="check"><input id="voiceConsent" type="checkbox">Voice</label>
+              <label class="check"><input id="emailConsent" type="checkbox">Email</label>
+            </div>
+            <button class="primary">Save patient</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>Schedule a visit</h2><p class="sub">Eligible channels are queued automatically for seven days before the visit.</p>
+          <form id="appointmentForm">
+            <label for="patient">Patient</label><select id="patient" required><option value="">Choose a patient</option></select>
+            <label for="startsAt">Date and time</label><input id="startsAt" type="datetime-local" required>
+            <div class="row2">
+              <div><label for="clinician">Clinician</label><input id="clinician"></div>
+              <div><label for="location">Location</label><input id="location"></div>
+            </div>
+            <button class="primary">Schedule & queue reminders</button>
+          </form>
+        </section>
+      </aside>
+      <div>
+        <div class="callout"><div class="phone">☎</div><div><b>Inbound call routing is ready</b><small>Patients can describe what they need. Billing, insurance, records, referrals, complaints, manager requests, or pressing zero route to the front desk.</small></div></div>
+        <section class="panel">
+          <h2>Upcoming care</h2><p class="sub">Appointments and their current workflow status.</p>
+          <div class="table-wrap"><table><thead><tr><th>Patient</th><th>Visit</th><th>Clinician</th><th>Location</th><th>Status</th></tr></thead><tbody id="appointments"></tbody></table></div>
+        </section>
+        <section class="panel">
+          <h2>Reminder queue</h2><p class="sub">Every delivery attempt is channel-specific and auditable.</p>
+          <div class="table-wrap"><table><thead><tr><th>Patient</th><th>Channel</th><th>Send at</th><th>Visit</th><th>Status</th></tr></thead><tbody id="reminders"></tbody></table></div>
+        </section>
+        <section class="panel">
+          <h2>Communication activity</h2>
+          <div class="table-wrap"><table><thead><tr><th>Patient</th><th>Channel</th><th>Outcome</th><th>Detail</th><th>Time</th></tr></thead><tbody id="events"></tbody></table></div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script>
+    const $=s=>document.querySelector(s);
+    const cookie=name=>decodeURIComponent(document.cookie.split("; ").find(r=>r.startsWith(name+"="))?.split("=")[1]||"");
+    const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const when=value=>new Date(value).toLocaleString([], {dateStyle:"medium",timeStyle:"short"});
+    function notify(message,error=false){const t=$("#toast");t.textContent=message;t.className="toast"+(error?" error":"");t.style.display="block";setTimeout(()=>t.style.display="none",3500)}
+    async function api(path,options={}){options.headers={...(options.headers||{}),"X-CSRF-Token":cookie("mobillity_csrf")};if(options.body)options.headers["Content-Type"]="application/json";const r=await fetch(path,options);if(r.status===401){location="/login";throw new Error("Sign in required")}const data=await r.json();if(!r.ok)throw new Error(data.detail||"Request failed");return data}
+    async function logout(){await api("/api/logout",{method:"POST"}).catch(()=>{});location="/login"}
+    let state={patients:[],appointments:[],reminders:[],events:[]};
+    function rows(items,render,cols){return items.length?items.map(render).join(""):`<tr><td colspan="${cols}" class="empty">Nothing here yet.</td></tr>`}
+    function render(){
+      $("#patientCount").textContent=state.patients.length;
+      $("#appointmentCount").textContent=state.appointments.filter(a=>["scheduled","confirmed"].includes(a.status)).length;
+      $("#pendingCount").textContent=state.reminders.filter(r=>["pending","processing"].includes(r.status)).length;
+      $("#sentCount").textContent=state.reminders.filter(r=>r.status==="sent").length;
+      $("#patient").innerHTML='<option value="">Choose a patient</option>'+state.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
+      $("#appointments").innerHTML=rows(state.appointments,a=>`<tr><td>${esc(a.patient_name)}</td><td>${when(a.starts_at)}</td><td>${esc(a.clinician||"—")}</td><td>${esc(a.location||"—")}</td><td><span class="badge ${a.status}">${esc(a.status)}</span></td></tr>`,5);
+      $("#reminders").innerHTML=rows(state.reminders,r=>`<tr><td>${esc(r.patient_name)}</td><td>${esc(r.channel)}</td><td>${when(r.scheduled_for)}</td><td>${when(r.starts_at)}</td><td><span title="${esc(r.last_error||"")}" class="badge ${r.status}">${esc(r.status)}</span></td></tr>`,5);
+      $("#events").innerHTML=rows(state.events,e=>`<tr><td>${esc(e.patient_name||"Unknown")}</td><td>${esc(e.channel)}</td><td>${esc(e.outcome)}</td><td>${esc(e.detail)}</td><td>${when(e.created_at)}</td></tr>`,5);
+      $("#deliveryMode").textContent=state.delivery_mode==="preview"?"Preview mode — no messages leave the app":`Live ${state.delivery_mode} delivery`;
+    }
+    async function load(){state=await api("/api/workflows/overview");render()}
+    $("#patientForm").addEventListener("submit",async e=>{e.preventDefault();try{await api("/api/workflows/patients",{method:"POST",body:JSON.stringify({name:$("#name").value,phone:$("#phone").value||null,email:$("#email").value||null,sms_consent:$("#smsConsent").checked,voice_consent:$("#voiceConsent").checked,email_consent:$("#emailConsent").checked})});e.target.reset();await load();notify("Patient saved") }catch(err){notify(err.message,true)}});
+    $("#appointmentForm").addEventListener("submit",async e=>{e.preventDefault();try{const local=new Date($("#startsAt").value);const result=await api("/api/workflows/appointments",{method:"POST",body:JSON.stringify({patient_id:Number($("#patient").value),starts_at:local.toISOString(),clinician:$("#clinician").value,location:$("#location").value})});e.target.reset();await load();notify(`Appointment scheduled; ${result.reminders_created} reminder${result.reminders_created===1?"":"s"} queued`) }catch(err){notify(err.message,true)}});
+    (async()=>{try{const me=await api("/api/me");$("#username").textContent=me.full_name||me.email;await load()}catch(err){notify(err.message,true)}})();
+  </script>
+</body>
+</html>
