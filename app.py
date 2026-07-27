@@ -31,6 +31,8 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import bcrypt
 import httpx
+import psycopg
+from psycopg.rows import dict_row
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 
@@ -69,21 +71,48 @@ if _enc_env:
 else:
     ENCRYPTION_KEY = secrets.token_bytes(32)
 
-# ── USER STORE (SQLite) ───────────────────────────────────────────────────────
+# ── USER STORE ────────────────────────────────────────────────────────────────
+# Production uses PostgreSQL when DATABASE_URL is configured. SQLite remains
+# available for local development and the test suite.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+USING_POSTGRES = bool(DATABASE_URL)
 DATABASE_FILE = os.getenv("DATABASE_FILE", os.path.join(BASE_DIR, "users.db"))
 
-def _db() -> sqlite3.Connection:
-    connection = sqlite3.connect(DATABASE_FILE)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+class _Database:
+    def __enter__(self):
+        if USING_POSTGRES:
+            self.connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        else:
+            self.connection = sqlite3.connect(DATABASE_FILE)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys = ON")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            if exc_type is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.connection.close()
+
+    def execute(self, statement: str, parameters=()):
+        if USING_POSTGRES:
+            statement = statement.replace("?", "%s")
+        return self.connection.execute(statement, parameters)
+
+def _db() -> _Database:
+    return _Database()
 
 def _init_db() -> None:
     with _db() as db:
-        db.execute("""
+        id_definition = "BIGSERIAL PRIMARY KEY" if USING_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        email_definition = "TEXT NOT NULL UNIQUE" if USING_POSTGRES else "TEXT NOT NULL UNIQUE COLLATE NOCASE"
+        db.execute(f"""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                id {id_definition},
+                email {email_definition},
                 password_hash TEXT,
                 full_name TEXT NOT NULL DEFAULT '',
                 google_sub TEXT UNIQUE,
@@ -92,10 +121,10 @@ def _init_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
-        db.execute("""
+        db.execute(f"""
             CREATE TABLE IF NOT EXISTS action_tokens (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id {id_definition},
+                user_id BIGINT NOT NULL,
                 purpose TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
                 token_hash TEXT NOT NULL UNIQUE,
                 expires_at TEXT NOT NULL,
@@ -104,13 +133,16 @@ def _init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
-        columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
-        if "analytics_enabled" not in columns:
-            db.execute("ALTER TABLE users ADD COLUMN analytics_enabled INTEGER NOT NULL DEFAULT 1")
-        db.execute("""
+        if USING_POSTGRES:
+            db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS analytics_enabled INTEGER NOT NULL DEFAULT 1")
+        else:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+            if "analytics_enabled" not in columns:
+                db.execute("ALTER TABLE users ADD COLUMN analytics_enabled INTEGER NOT NULL DEFAULT 1")
+        db.execute(f"""
             CREATE TABLE IF NOT EXISTS analytics_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id {id_definition},
+                user_id BIGINT NOT NULL,
                 event_name TEXT NOT NULL,
                 page TEXT NOT NULL,
                 occurred_at TEXT NOT NULL,
@@ -259,7 +291,7 @@ async def get_admin_user(current_user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Administrator access required.")
     return current_user
 
-def _purge_expired_analytics(db: sqlite3.Connection) -> None:
+def _purge_expired_analytics(db: _Database) -> None:
     cutoff = (_utcnow() - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
     db.execute("DELETE FROM analytics_events WHERE occurred_at < ?", (cutoff,))
 
@@ -626,9 +658,10 @@ async def register(request: Request, body: RegisterInput):
                 except RuntimeError:
                     logger.exception("Could not resend verification email")
             return {"message": "If this email can be registered, a verification message has been sent."}
+        returning = " RETURNING id" if USING_POSTGRES else ""
         cursor = db.execute(
             """INSERT INTO users(email, password_hash, full_name, email_verified, created_at)
-               VALUES (?, ?, ?, 0, ?)""",
+               VALUES (?, ?, ?, 0, ?)""" + returning,
             (
                 email,
                 bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode(),
@@ -636,7 +669,8 @@ async def register(request: Request, body: RegisterInput):
                 _utcnow().isoformat(),
             ),
         )
-        user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        user_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+        user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     try:
         _send_verification_email(user)
     except RuntimeError as exc:
@@ -744,12 +778,14 @@ async def google_callback(request: Request):
             )
             user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
         else:
+            returning = " RETURNING id" if USING_POSTGRES else ""
             cursor = db.execute(
                 """INSERT INTO users(email, full_name, google_sub, email_verified, created_at)
-                   VALUES (?, ?, ?, 1, ?)""",
+                   VALUES (?, ?, ?, 1, ?)""" + returning,
                 (email, str(info.get("name", ""))[:120], info["sub"], _utcnow().isoformat()),
             )
-            user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            user_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+            user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     response = RedirectResponse("/app", status_code=303)
     _set_auth_cookies(response, user)
     return response
@@ -839,16 +875,28 @@ async def admin_analytics(admin_user=Depends(get_admin_user)):
             SELECT event_name, page, COUNT(*) AS count
             FROM analytics_events GROUP BY event_name, page ORDER BY count DESC
         """).fetchall()
-        daily = db.execute("""
-            WITH RECURSIVE dates(day) AS (
-              SELECT date('now', '-29 days')
-              UNION ALL SELECT date(day, '+1 day') FROM dates WHERE day < date('now')
-            )
-            SELECT dates.day,
-              (SELECT COUNT(*) FROM users WHERE date(created_at) = dates.day) AS registrations,
-              (SELECT COUNT(*) FROM analytics_events WHERE date(occurred_at) = dates.day) AS events
-            FROM dates
-        """).fetchall()
+        if USING_POSTGRES:
+            daily = db.execute("""
+                SELECT dates.day::text AS day,
+                  (SELECT COUNT(*) FROM users WHERE created_at::date = dates.day) AS registrations,
+                  (SELECT COUNT(*) FROM analytics_events WHERE occurred_at::date = dates.day) AS events
+                FROM generate_series(
+                  CURRENT_DATE - INTERVAL '29 days',
+                  CURRENT_DATE,
+                  INTERVAL '1 day'
+                ) AS dates(day)
+            """).fetchall()
+        else:
+            daily = db.execute("""
+                WITH RECURSIVE dates(day) AS (
+                  SELECT date('now', '-29 days')
+                  UNION ALL SELECT date(day, '+1 day') FROM dates WHERE day < date('now')
+                )
+                SELECT dates.day,
+                  (SELECT COUNT(*) FROM users WHERE date(created_at) = dates.day) AS registrations,
+                  (SELECT COUNT(*) FROM analytics_events WHERE date(occurred_at) = dates.day) AS events
+                FROM dates
+            """).fetchall()
     return {
         "retention_days": ANALYTICS_RETENTION_DAYS,
         "totals": dict(totals),

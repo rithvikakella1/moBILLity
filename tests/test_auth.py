@@ -134,9 +134,10 @@ class AnalyticsTests(unittest.TestCase):
         with auth_app._db() as db:
             for email in ("admin@example.com", "member@example.com"):
                 db.execute(
-                    """INSERT OR IGNORE INTO users
+                    """INSERT INTO users
                        (email, password_hash, full_name, email_verified, created_at)
-                       VALUES (?, ?, ?, 1, ?)""",
+                       VALUES (?, ?, ?, 1, ?)
+                       ON CONFLICT(email) DO NOTHING""",
                     (email, auth_app.DUMMY_PASSWORD_HASH, email.split("@")[0], now),
                 )
 

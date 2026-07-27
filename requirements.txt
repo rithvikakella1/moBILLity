@@ -11,3 +11,4 @@ authlib
 email-validator
 httpx
 itsdangerous
+psycopg[binary]
