@@ -32,6 +32,9 @@ APP_BASE_URL=https://your-domain.example
 JWT_SECRET_KEY=<at-least-32-random-bytes>
 SESSION_SECRET_KEY=<a-different-random-value>
 COOKIE_SECURE=true
+ADMIN_EMAILS=admin@example.com
+ANALYTICS_RETENTION_DAYS=90
+PRIVACY_CONTACT_EMAIL=privacy@example.com
 ```
 
 Configure SMTP for verification and password-reset messages:
@@ -94,3 +97,19 @@ Do not commit these values. `.env`, SQLite databases, and the legacy
 | `/login` | Sign in |
 | `/forgot-password` | Request a reset link |
 | `/app` | Code extractor (requires authentication) |
+| `/admin` | Privacy-minimized account analytics (admin only) |
+| `/privacy` | Analytics notice and user opt-out |
+
+## Privacy-minimized analytics
+
+Set `ADMIN_EMAILS` to a comma-separated list of verified account emails. The
+server—not the page UI—enforces admin access. Analytics stores only allowlisted
+feature events, a user ID, a coarse page name, and a timestamp. It never stores
+clinical notes, extracted codes, IP addresses, location, or device fingerprints.
+Users can disable and erase their event history from `/privacy`; the default
+event retention period is 90 days.
+
+Before production launch, confirm the notice matches actual operational
+practices, document a consumer-request and appeal workflow, and have qualified
+privacy counsel review the deployment. Production startup requires a monitored
+`PRIVACY_CONTACT_EMAIL`.

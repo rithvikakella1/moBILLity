@@ -2,6 +2,7 @@ import os
 import json
 import re
 import base64
+import html
 import secrets
 import hashlib
 import logging
@@ -42,11 +43,24 @@ SESSION_SECRET = os.getenv("SESSION_SECRET_KEY") or secrets.token_hex(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 ACTION_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACTION_TOKEN_EXPIRE_MINUTES", "60"))
+ANALYTICS_RETENTION_DAYS = min(max(int(os.getenv("ANALYTICS_RETENTION_DAYS", "90")), 1), 365)
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ADMIN_EMAILS", "").split(",")
+    if email.strip()
+}
+PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy@example.com").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", str(IS_PRODUCTION)).lower() == "true"
 
-if IS_PRODUCTION and (not os.getenv("JWT_SECRET_KEY") or not os.getenv("SESSION_SECRET_KEY")):
-    raise RuntimeError("JWT_SECRET_KEY and SESSION_SECRET_KEY are required in production.")
+if IS_PRODUCTION and (
+    not os.getenv("JWT_SECRET_KEY")
+    or not os.getenv("SESSION_SECRET_KEY")
+    or not os.getenv("PRIVACY_CONTACT_EMAIL")
+):
+    raise RuntimeError(
+        "JWT_SECRET_KEY, SESSION_SECRET_KEY, and PRIVACY_CONTACT_EMAIL are required in production."
+    )
 
 _enc_env = os.getenv("ENCRYPTION_KEY", "")
 if _enc_env:
@@ -90,7 +104,22 @@ def _init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+        if "analytics_enabled" not in columns:
+            db.execute("ALTER TABLE users ADD COLUMN analytics_enabled INTEGER NOT NULL DEFAULT 1")
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                event_name TEXT NOT NULL,
+                page TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
         db.execute("CREATE INDEX IF NOT EXISTS idx_action_tokens_lookup ON action_tokens(token_hash, purpose)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_analytics_user_time ON analytics_events(user_id, occurred_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_analytics_event_time ON analytics_events(event_name, occurred_at)")
 
 _init_db()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token", auto_error=False)
@@ -221,6 +250,31 @@ async def get_current_user(request: Request, token: Optional[str] = Depends(oaut
         raise exc
     except (TypeError, ValueError):
         raise exc
+
+def _is_admin(user) -> bool:
+    return _normalize_email(user["email"]) in ADMIN_EMAILS
+
+async def get_admin_user(current_user=Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Administrator access required.")
+    return current_user
+
+def _purge_expired_analytics(db: sqlite3.Connection) -> None:
+    cutoff = (_utcnow() - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
+    db.execute("DELETE FROM analytics_events WHERE occurred_at < ?", (cutoff,))
+
+def _record_event(user_id: int, event_name: str, page: str = "app") -> None:
+    with _db() as db:
+        enabled = db.execute(
+            "SELECT analytics_enabled FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not enabled or not enabled["analytics_enabled"]:
+            return
+        _purge_expired_analytics(db)
+        db.execute(
+            "INSERT INTO analytics_events(user_id, event_name, page, occurred_at) VALUES (?, ?, ?, ?)",
+            (user_id, event_name, page, _utcnow().isoformat()),
+        )
 
 def _create_action_token(user_id: int, purpose: str) -> str:
     raw_token = secrets.token_urlsafe(32)
@@ -491,6 +545,18 @@ async def serve_landing():
 async def serve_app():
     return _serve("app.html")
 
+@app.get("/admin", response_class=HTMLResponse)
+async def serve_admin(admin_user=Depends(get_admin_user)):
+    return _serve("admin.html")
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def serve_privacy():
+    return (
+        _serve("privacy.html")
+        .replace("{{RETENTION_DAYS}}", str(ANALYTICS_RETENTION_DAYS))
+        .replace("{{PRIVACY_CONTACT}}", html.escape(PRIVACY_CONTACT_EMAIL, quote=True))
+    )
+
 
 
 
@@ -690,7 +756,12 @@ async def google_callback(request: Request):
 
 @app.get("/api/me")
 async def me(current_user=Depends(get_current_user)):
-    return {"email": current_user["email"], "full_name": current_user["full_name"]}
+    return {
+        "email": current_user["email"],
+        "full_name": current_user["full_name"],
+        "is_admin": _is_admin(current_user),
+        "analytics_enabled": bool(current_user["analytics_enabled"]),
+    }
 
 @app.post("/api/logout")
 async def logout(request: Request, response: Response):
@@ -702,6 +773,89 @@ async def logout(request: Request, response: Response):
 
 class NoteInput(BaseModel):
     note: str
+
+class AnalyticsEventInput(BaseModel):
+    event_name: str
+    page: str
+
+ALLOWED_ANALYTICS_EVENTS = {
+    "page_view",
+    "analyze_clicked",
+    "dictation_started",
+    "extraction_succeeded",
+    "extraction_failed",
+}
+ALLOWED_ANALYTICS_PAGES = {"app"}
+
+@app.post("/api/analytics/events", status_code=204)
+@limiter.limit("60/minute")
+async def analytics_event(
+    request: Request,
+    body: AnalyticsEventInput,
+    current_user=Depends(get_current_user),
+):
+    if request.cookies.get("mobillity_session"):
+        _require_csrf(request)
+    if body.event_name not in ALLOWED_ANALYTICS_EVENTS or body.page not in ALLOWED_ANALYTICS_PAGES:
+        raise HTTPException(status_code=400, detail="Unsupported analytics event.")
+    _record_event(current_user["id"], body.event_name, body.page)
+    return Response(status_code=204)
+
+@app.delete("/api/analytics/me", status_code=204)
+async def disable_my_analytics(request: Request, current_user=Depends(get_current_user)):
+    _require_csrf(request)
+    with _db() as db:
+        db.execute("DELETE FROM analytics_events WHERE user_id = ?", (current_user["id"],))
+        db.execute("UPDATE users SET analytics_enabled = 0 WHERE id = ?", (current_user["id"],))
+    return Response(status_code=204)
+
+@app.put("/api/analytics/me", status_code=204)
+async def enable_my_analytics(request: Request, current_user=Depends(get_current_user)):
+    _require_csrf(request)
+    with _db() as db:
+        db.execute("UPDATE users SET analytics_enabled = 1 WHERE id = ?", (current_user["id"],))
+    return Response(status_code=204)
+
+@app.get("/api/admin/analytics")
+async def admin_analytics(admin_user=Depends(get_admin_user)):
+    with _db() as db:
+        _purge_expired_analytics(db)
+        totals = db.execute("""
+            SELECT
+              (SELECT COUNT(*) FROM users) AS registered_users,
+              (SELECT COUNT(*) FROM users WHERE email_verified = 1) AS verified_users,
+              (SELECT COUNT(DISTINCT user_id) FROM analytics_events) AS active_users,
+              (SELECT COUNT(*) FROM analytics_events) AS total_events
+        """).fetchone()
+        users = db.execute("""
+            SELECT u.id, u.email, u.full_name, u.email_verified, u.created_at,
+                   u.analytics_enabled, COUNT(a.id) AS event_count,
+                   MAX(a.occurred_at) AS last_active_at,
+                   SUM(CASE WHEN a.event_name = 'analyze_clicked' THEN 1 ELSE 0 END) AS analyses
+            FROM users u LEFT JOIN analytics_events a ON a.user_id = u.id
+            GROUP BY u.id ORDER BY u.created_at DESC
+        """).fetchall()
+        top_events = db.execute("""
+            SELECT event_name, page, COUNT(*) AS count
+            FROM analytics_events GROUP BY event_name, page ORDER BY count DESC
+        """).fetchall()
+        daily = db.execute("""
+            WITH RECURSIVE dates(day) AS (
+              SELECT date('now', '-29 days')
+              UNION ALL SELECT date(day, '+1 day') FROM dates WHERE day < date('now')
+            )
+            SELECT dates.day,
+              (SELECT COUNT(*) FROM users WHERE date(created_at) = dates.day) AS registrations,
+              (SELECT COUNT(*) FROM analytics_events WHERE date(occurred_at) = dates.day) AS events
+            FROM dates
+        """).fetchall()
+    return {
+        "retention_days": ANALYTICS_RETENTION_DAYS,
+        "totals": dict(totals),
+        "users": [dict(row) for row in users],
+        "top_events": [dict(row) for row in top_events],
+        "daily": [dict(row) for row in daily],
+    }
 
 
 @app.post("/api/extract")
@@ -718,6 +872,8 @@ async def api_extract(
     try:
         result = extract_medical_codes(input.note)
         _ = aes_encrypt(input.note)  # audit log (persist in production)
+        _record_event(current_user["id"], "extraction_succeeded")
         return {"result": result}
     except Exception as e:
+        _record_event(current_user["id"], "extraction_failed")
         raise HTTPException(status_code=500, detail=str(e))

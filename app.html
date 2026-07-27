@@ -763,6 +763,18 @@
       return document.cookie.split('; ').find(row => row.startsWith(name + '='))?.split('=')[1] || '';
     }
 
+    function track(eventName) {
+      fetch('/api/analytics/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': decodeURIComponent(getCookie('mobillity_csrf')),
+        },
+        body: JSON.stringify({ event_name: eventName, page: 'app' }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+
     async function logout() {
       await fetch('/api/logout', {
         method: 'POST',
@@ -778,6 +790,14 @@
         const user = await response.json();
         const el = document.getElementById('navUsername');
         if (el) el.textContent = user.full_name || user.email;
+        if (user.is_admin) {
+          const link = document.createElement('a');
+          link.href = '/admin';
+          link.textContent = 'Analytics';
+          link.style.cssText = 'font-size:.82rem;color:var(--teal);font-weight:600;text-decoration:none';
+          document.querySelector('.nav-user')?.prepend(link);
+        }
+        if (user.analytics_enabled) track('page_view');
       } catch {
         window.location.href = '/login';
       }
@@ -832,6 +852,7 @@
       isListening = !isListening;
       if (isListening) {
         recognition.start();
+        track('dictation_started');
       } else {
         recognition.stop();
       }
@@ -900,6 +921,7 @@
 
       output.className = '';
       output.innerHTML = '';
+      track('analyze_clicked');
       setLoading(true);
       setProgress(20, 'Sending to AI…', 'active');
 

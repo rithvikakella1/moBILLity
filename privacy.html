@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Privacy · moBILLity</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{--navy:#0a1628;--teal:#00bfa6;--cream:#f5f2ec;--muted:#596579;--line:#dfddd6}*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font:16px/1.7 "DM Sans",sans-serif}header{padding:20px 5%;border-bottom:1px solid var(--line)}header a{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}header span{color:var(--teal)}main{max-width:780px;margin:auto;padding:54px 24px 80px}h1,h2{font-family:"DM Serif Display";font-weight:400}h1{font-size:46px;line-height:1.1;margin:0 0 10px}h2{font-size:25px;margin:34px 0 6px}p,li{color:var(--muted)}.date{font-size:13px}.callout{background:white;border:1px solid var(--line);border-left:4px solid var(--teal);border-radius:12px;padding:16px 19px;margin:24px 0}button{border:0;border-radius:99px;background:var(--navy);color:white;padding:11px 18px;font:600 14px "DM Sans";cursor:pointer}.status{margin-left:10px;font-size:13px}a{color:#087768}
+  </style>
+</head>
+<body><header><a href="/">mo<span>BILL</span>ity</a></header><main>
+  <h1>Privacy notice</h1><p class="date">Effective July 27, 2026</p>
+  <div class="callout">We use first-party analytics to understand account registrations and feature usage. We do not use advertising pixels or sell/share this data for cross-context behavioral advertising.</div>
+  <h2>What analytics collects</h2><p>Your account identifier, registration and verification status, page views, clicks on named product features, extraction success or failure, and timestamps. Administrators can associate these events with your account to support and improve the service.</p>
+  <h2>What analytics does not collect</h2><p>Clinical-note text, diagnoses, extracted medical codes, microphone audio, IP addresses, precise location, browser fingerprints, or advertising identifiers. Never enter information into moBILLity unless you are authorized to process it.</p>
+  <h2>Purpose, retention, and disclosure</h2><p>We use analytics only for security, service operation, support, adoption measurement, and product improvement. Event-level analytics is retained for up to {{RETENTION_DAYS}} days. Account records remain while the account is active or as legally required. Analytics is not disclosed to ad networks or data brokers.</p>
+  <h2>Your choices and rights</h2><p>You may turn off and erase event analytics below while signed in. Depending on where you live, you may also request access, correction, deletion, or a copy of personal data, and appeal a denied request. We will verify requests before acting. We do not discriminate for exercising privacy rights.</p>
+  <p><button id="optout">Turn off & erase my analytics</button><span class="status" id="status"></span></p>
+  <h2>Health and sensitive information</h2><p>This analytics system is intentionally separated from clinical content. Whether HIPAA, the FTC Health Breach Notification Rule, state consumer-health laws, or other rules apply depends on how your organization uses and deploys the service. Appropriate contracts, access controls, risk assessments, incident response, and breach-notification procedures may still be required.</p>
+  <h2>Contact</h2><p>Send privacy requests or appeals to <a href="mailto:{{PRIVACY_CONTACT}}">{{PRIVACY_CONTACT}}</a>. We will explain any denial and how to appeal it.</p>
+  <p><a href="/app">Return to the coding tool</a></p>
+  <script>
+    function cookie(name){return document.cookie.split('; ').find(r=>r.startsWith(name+'='))?.split('=')[1]||''}
+    document.querySelector('#optout').onclick=async()=>{
+      const status=document.querySelector('#status');status.textContent='Working…';
+      const r=await fetch('/api/analytics/me',{method:'DELETE',headers:{'X-CSRF-Token':decodeURIComponent(cookie('mobillity_csrf'))}});
+      status.textContent=r.ok?'Analytics is off and prior events were erased.':r.status===401?'Sign in first.':'Request failed.';
+    };
+  </script>
+</main></body></html>

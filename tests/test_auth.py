@@ -8,6 +8,7 @@ os.environ["DATABASE_FILE"] = tempfile.mktemp(prefix="mobillity-test-", suffix="
 os.environ["OPENAI_API_KEY"] = "test-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-that-is-long-and-random"
 os.environ["SESSION_SECRET_KEY"] = "test-session-secret-that-is-long-and-random"
+os.environ["ADMIN_EMAILS"] = "admin@example.com"
 
 from fastapi.testclient import TestClient
 
@@ -125,6 +126,55 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(request.kwargs["headers"]["api-key"], "test-brevo-key")
         self.assertEqual(request.kwargs["json"]["sender"]["email"], "verified@example.com")
         self.assertEqual(request.kwargs["json"]["to"][0]["email"], "patient@example.com")
+
+class AnalyticsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        now = auth_app._utcnow().isoformat()
+        with auth_app._db() as db:
+            for email in ("admin@example.com", "member@example.com"):
+                db.execute(
+                    """INSERT OR IGNORE INTO users
+                       (email, password_hash, full_name, email_verified, created_at)
+                       VALUES (?, ?, ?, 1, ?)""",
+                    (email, auth_app.DUMMY_PASSWORD_HASH, email.split("@")[0], now),
+                )
+
+    def _login(self, email):
+        client = TestClient(auth_app.app, client=(email, 50000))
+        response = client.post(
+            "/api/token", data={"username": email, "password": "not-a-real-password"}
+        )
+        self.assertEqual(response.status_code, 200)
+        return client
+
+    def test_admin_access_event_allowlist_and_opt_out(self):
+        member = self._login("member@example.com")
+        self.assertEqual(member.get("/api/admin/analytics").status_code, 403)
+        csrf = member.cookies.get("mobillity_csrf")
+        event = member.post(
+            "/api/analytics/events",
+            headers={"X-CSRF-Token": csrf},
+            json={"event_name": "page_view", "page": "app"},
+        )
+        self.assertEqual(event.status_code, 204)
+        rejected = member.post(
+            "/api/analytics/events",
+            headers={"X-CSRF-Token": csrf},
+            json={"event_name": "note_text", "page": "app"},
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+        opted_out = member.delete(
+            "/api/analytics/me", headers={"X-CSRF-Token": csrf}
+        )
+        self.assertEqual(opted_out.status_code, 204)
+        self.assertFalse(member.get("/api/me").json()["analytics_enabled"])
+
+        admin = self._login("admin@example.com")
+        dashboard = admin.get("/api/admin/analytics")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertGreaterEqual(dashboard.json()["totals"]["registered_users"], 2)
 
 
 if __name__ == "__main__":

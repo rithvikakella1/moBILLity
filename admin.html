@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Analytics · moBILLity</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--navy:#0a1628;--teal:#00bfa6;--cream:#f5f2ec;--muted:#667085;--line:#e6e3dc;--white:#fff;--red:#b42318}
+    *{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font-family:"DM Sans",sans-serif}
+    header{display:flex;justify-content:space-between;align-items:center;padding:20px 5%;background:rgba(245,242,236,.94);border-bottom:1px solid var(--line)}
+    .logo{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}.logo span{color:var(--teal)}
+    nav{display:flex;gap:18px;align-items:center}nav a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px}
+    main{max-width:1200px;margin:auto;padding:42px 24px 70px}
+    h1{font:44px/1.05 "DM Serif Display";margin:0 0 8px}h1 em{color:var(--teal);font-style:normal}
+    .intro{color:var(--muted);margin:0 0 28px}.notice{padding:13px 16px;background:#e8f8f5;border:1px solid #b7e8df;border-radius:12px;font-size:13px;margin-bottom:24px}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:var(--white);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 5px 22px rgba(10,22,40,.05)}
+    .label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em}.number{font:35px "DM Serif Display";margin-top:8px}
+    .grid{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-top:18px}h2{font:25px "DM Serif Display";margin:0 0 18px}
+    .chart{height:190px;display:flex;align-items:flex-end;gap:5px;border-bottom:1px solid var(--line);padding-top:12px}.bar{flex:1;background:var(--teal);min-height:2px;border-radius:4px 4px 0 0;opacity:.82;position:relative}.bar:hover{opacity:1}.bar span{display:none;position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--navy);color:white;padding:5px;border-radius:5px;font-size:10px;white-space:nowrap}.bar:hover span{display:block}
+    .event{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}.event:last-child{border:0}.event b{font-variant-numeric:tabular-nums}
+    .table-card{margin-top:18px;overflow:hidden}.table-head{padding:20px 20px 0}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:13px 16px;border-top:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}td.name{font-weight:600}small{display:block;color:var(--muted);font-weight:400;margin-top:2px}.pill{padding:4px 8px;border-radius:99px;background:#e8f8f5;color:#087768;font-weight:700;font-size:11px}.off{background:#f2f4f7;color:#667085}
+    .empty,.error{color:var(--muted);padding:30px;text-align:center}.error{color:var(--red)}
+    @media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}h1{font-size:36px}}@media(max-width:480px){.stats{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header><a class="logo" href="/">mo<span>BILL</span>ity</a><nav><a href="/app">Coding tool</a><a href="/privacy">Privacy</a></nav></header>
+  <main>
+    <h1>Account <em>analytics</em></h1>
+    <p class="intro">First-party product usage, available only to authorized administrators.</p>
+    <div class="notice" id="notice">Loading privacy and retention settings…</div>
+    <section class="stats" id="stats"></section>
+    <section class="grid">
+      <div class="card"><h2>Activity · last 30 days</h2><div class="chart" id="chart"></div></div>
+      <div class="card"><h2>Most-used actions</h2><div id="events"></div></div>
+    </section>
+    <section class="card table-card">
+      <div class="table-head"><h2>Registered accounts</h2></div>
+      <div class="scroll"><table><thead><tr><th>User</th><th>Registered</th><th>Status</th><th>Tracked actions</th><th>Analyses</th><th>Last active</th></tr></thead><tbody id="users"></tbody></table></div>
+    </section>
+  </main>
+  <script>
+    const fmt = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)) : '—';
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    async function load(){
+      const response=await fetch('/api/admin/analytics');
+      if(response.status===401){location.href='/login';return}
+      if(!response.ok)throw new Error(response.status===403?'This account is not an administrator.':'Analytics could not be loaded.');
+      const data=await response.json(), t=data.totals;
+      document.querySelector('#notice').textContent=`Events are retained for ${data.retention_days} days. Clinical text, codes, IP addresses, location, and device fingerprints are never collected by this analytics system.`;
+      document.querySelector('#stats').innerHTML=[
+        ['Registered users',t.registered_users],['Verified users',t.verified_users],
+        ['Active users',t.active_users],['Tracked actions',t.total_events]
+      ].map(([l,n])=>`<div class="card"><div class="label">${l}</div><div class="number">${n}</div></div>`).join('');
+      const max=Math.max(1,...data.daily.map(d=>d.events));
+      document.querySelector('#chart').innerHTML=data.daily.map(d=>`<div class="bar" style="height:${Math.max(2,d.events/max*100)}%"><span>${esc(d.day)} · ${d.events} actions · ${d.registrations} registrations</span></div>`).join('');
+      document.querySelector('#events').innerHTML=data.top_events.length?data.top_events.map(e=>`<div class="event"><span>${esc(e.event_name.replaceAll('_',' '))}<small>${esc(e.page)}</small></span><b>${e.count}</b></div>`).join(''):'<div class="empty">No activity yet.</div>';
+      document.querySelector('#users').innerHTML=data.users.map(u=>`<tr><td class="name">${esc(u.full_name||'Unnamed user')}<small>${esc(u.email)}</small></td><td>${fmt(u.created_at)}</td><td><span class="pill ${u.analytics_enabled?'':'off'}">${u.analytics_enabled?'Analytics on':'Opted out'}</span></td><td>${u.event_count}</td><td>${u.analyses||0}</td><td>${fmt(u.last_active_at)}</td></tr>`).join('');
+    }
+    load().catch(error=>document.querySelector('main').innerHTML=`<div class="card error">${esc(error.message)}</div>`);
+  </script>
+</body>
+</html>
