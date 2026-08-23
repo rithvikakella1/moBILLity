@@ -1,0 +1,98 @@
+---
+/**
+ * Navigation for the authenticated application pages.
+ *
+ * Previously duplicated in app.html and workflows.html with divergent markup
+ * and styling.
+ */
+export interface Props {
+  /** Which nav item to mark current. */
+  active?: "extractor" | "workflows";
+}
+
+const { active } = Astro.props;
+---
+
+<nav>
+  <a class="logo" href="/">mo<span>BILL</span>ity</a>
+  <a class="nav-link" class:list={[{ active: active === "workflows" }]} href="/workflows">
+    Workflow Hub
+  </a>
+  <a class="nav-link" class:list={[{ active: active === "extractor" }]} href="/app">
+    Code Extractor
+  </a>
+  <div class="nav-user">
+    <span id="username"></span>
+    <button class="logout" id="logout" type="button">Sign out</button>
+  </div>
+</nav>
+
+<script>
+  import { logout } from "../lib/api.js";
+  document.querySelector("#logout")?.addEventListener("click", logout);
+</script>
+
+<style>
+  nav {
+    height: 68px;
+    padding: 0 4%;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    background: rgba(245, 242, 236, 0.94);
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font: 1.5rem var(--font-display);
+    text-decoration: none;
+    color: var(--navy);
+  }
+  .logo span {
+    color: var(--teal-text);
+  }
+
+  .nav-link {
+    font-size: 0.88rem;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .nav-link.active {
+    color: var(--navy);
+    font-weight: 700;
+  }
+
+  .nav-user {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logout {
+    border: 1px solid var(--line);
+    background: var(--white);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .logout:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  @media (max-width: 850px) {
+    .nav-link {
+      display: none;
+    }
+  }
+</style>

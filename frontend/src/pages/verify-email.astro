@@ -1,0 +1,37 @@
+---
+import Auth from "../layouts/Auth.astro";
+---
+
+<Auth
+  title="Verify email · moBILLity"
+  heading="Verifying your email"
+  intro="Please wait while we validate your one-time link."
+>
+  <p class="fine" id="resend-prompt" hidden>
+    Link expired? <a class="link" href="/login">Sign in</a> to request a new one.
+  </p>
+  <p slot="footer"><a class="link" href="/login">Go to sign in</a></p>
+</Auth>
+
+<script>
+  import { showAlert, payload, linkToken } from "../lib/forms.js";
+
+  (async () => {
+    showAlert("Checking link…", "");
+    try {
+      const response = await fetch("/api/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: linkToken() }),
+      });
+      const data = await payload(response);
+      showAlert(data.message || data.detail, response.ok ? "success" : "error");
+      if (!response.ok) {
+        document.querySelector("#resend-prompt")?.removeAttribute("hidden");
+      }
+    } catch {
+      showAlert("Could not verify this link.");
+      document.querySelector("#resend-prompt")?.removeAttribute("hidden");
+    }
+  })();
+</script>

@@ -1,8 +1,42 @@
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# `.env` alone did not cover it: a file literally named `env` full of live
+# credentials sat untracked but fully committable until this was widened.
 .env
-__pycache__
-.venv
-users.json
+.env.*
+!.env.example
+env
+
+# Generated automatically on first run for local development.
+.dev-encryption-key
+
+# ── Local data ───────────────────────────────────────────────────────────────
+# The SQLite database holds encrypted patient rows. Never commit it, including
+# the WAL sidecars, which contain the same data.
 users.db
 users.db-shm
 users.db-wal
+users.json
+
+# Benchmark output is a measurement of one run, not source. The case file it
+# reads (tests/benchmark_cases.json) IS tracked.
 tests/benchmark_results.json
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__
+*.py[cod]
+.venv
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Astro frontend ───────────────────────────────────────────────────────────
+frontend/node_modules
+frontend/dist
+frontend/.astro
+
+# ── OS and editor cruft ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

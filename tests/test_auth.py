@@ -1,15 +1,10 @@
 import os
 import re
-import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-os.environ["DATABASE_FILE"] = tempfile.mktemp(prefix="mobillity-test-", suffix=".db")
-os.environ["OPENAI_API_KEY"] = "test-key"
-os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-that-is-long-and-random"
-os.environ["SESSION_SECRET_KEY"] = "test-session-secret-that-is-long-and-random"
-os.environ["ADMIN_EMAILS"] = "admin@example.com"
-
+# Environment setup and database isolation live in conftest.py, so that this
+# module behaves identically whether it runs first, last, or alone.
 from fastapi.testclient import TestClient
 
 import app as auth_app
@@ -96,10 +91,8 @@ class AuthenticationFlowTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         auth_app._send_email = cls.original_send_email
-        try:
-            os.remove(os.environ["DATABASE_FILE"])
-        except FileNotFoundError:
-            pass
+        # The database file is owned by the session fixture. Deleting it here is
+        # what previously broke every test class collected after this one.
 
 
 class EmailDeliveryTests(unittest.TestCase):
@@ -176,6 +169,48 @@ class AnalyticsTests(unittest.TestCase):
         dashboard = admin.get("/api/admin/analytics")
         self.assertEqual(dashboard.status_code, 200)
         self.assertGreaterEqual(dashboard.json()["totals"]["registered_users"], 2)
+
+
+class AdminPageAccessTests(unittest.TestCase):
+    """The /admin page gate, as opposed to the /api/admin/analytics data gate."""
+
+    def test_anonymous_visitor_is_redirected_to_login(self):
+        client = TestClient(auth_app.app, follow_redirects=False)
+        response = client.get("/admin")
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("/login", response.headers["location"])
+
+    def test_signed_in_non_admin_gets_a_rendered_403(self):
+        client = TestClient(auth_app.app, follow_redirects=False)
+        with auth_app._db() as db:
+            db.execute("DELETE FROM users WHERE email = ?", ("notadmin@example.com",))
+            db.execute(
+                """INSERT INTO users (email, password_hash, full_name, email_verified, created_at)
+                   VALUES (?, ?, 'Not Admin', 1, ?)""",
+                ("notadmin@example.com", auth_app.DUMMY_PASSWORD_HASH,
+                 auth_app._utcnow().isoformat()),
+            )
+        client.post("/api/token",
+                    data={"username": "notadmin@example.com", "password": "not-a-real-password"})
+        response = client.get("/admin")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Administrator access required", response.text)
+
+    def test_admin_gets_the_dashboard(self):
+        client = TestClient(auth_app.app, follow_redirects=False)
+        with auth_app._db() as db:
+            db.execute(
+                """INSERT INTO users (email, password_hash, full_name, email_verified, created_at)
+                   VALUES (?, ?, 'Admin', 1, ?)
+                   ON CONFLICT(email) DO NOTHING""",
+                ("admin@example.com", auth_app.DUMMY_PASSWORD_HASH,
+                 auth_app._utcnow().isoformat()),
+            )
+        client.post("/api/token",
+                    data={"username": "admin@example.com", "password": "not-a-real-password"})
+        response = client.get("/admin")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Admin Analytics", response.text)
 
 
 if __name__ == "__main__":

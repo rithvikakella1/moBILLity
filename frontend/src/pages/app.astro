@@ -1,0 +1,535 @@
+---
+import Base from "../layouts/Base.astro";
+import AppNav from "../components/AppNav.astro";
+import Footer from "../components/Footer.astro";
+// Global, not scoped: results.js builds this markup at runtime, so a scoped
+// selector would never match it.
+import "../styles/results.css";
+---
+
+<Base title="moBILLity – AI Medical Code Extractor">
+  <AppNav slot="nav" active="extractor" />
+
+  <main id="main">
+    <div class="page-header">
+      <div class="page-badge"><span class="badge-dot"></span>Live Extraction</div>
+      <h1>Medical Code <em>Extractor</em></h1>
+      <p>
+        Paste or dictate any clinical note and let our AI identify and map the correct ICD-10,
+        CPT, and HCPCS codes.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-chrome">
+        <div class="chrome-dot"></div>
+        <div class="chrome-dot"></div>
+        <div class="chrome-dot"></div>
+        <span class="chrome-title">moBILLity — Code Extractor</span>
+      </div>
+
+      <div class="card-body">
+        <label class="field-label" for="noteInput">Clinical Note</label>
+        <div class="textarea-wrap">
+          <textarea
+            id="noteInput"
+            placeholder="e.g. Patient presents with Type 2 diabetes mellitus with diabetic nephropathy. History of essential hypertension. Prescribed metformin and lisinopril…"
+          ></textarea>
+        </div>
+
+        <div class="form-footer">
+          <div class="form-footer-left">
+            <span class="char-count" id="charCount">0 characters</span>
+            <button
+              class="btn-mic"
+              id="micBtn"
+              type="button"
+              aria-pressed="false"
+              title="Dictate clinical note"
+            >
+              🎤 Dictate
+            </button>
+          </div>
+          <button class="btn-analyze" id="analyzeBtn" type="button">🧠 Analyze Note</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="status-row">
+          <span class="status-label">AI Analysis</span>
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-labelledby="statusMsg"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            id="progressTrack"
+          >
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <span class="status-msg" id="statusMsg">Ready</span>
+        </div>
+
+        <div
+          id="output"
+          role="region"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-label="Extraction results"
+        ></div>
+      </div>
+    </div>
+  </main>
+
+  <Footer slot="footer" />
+</Base>
+
+<script>
+  import { api, track, logout } from "../lib/api.js";
+  import {
+    formatResults,
+    formatRaw,
+    formatError,
+    initResultInteractions,
+  } from "../lib/results.js";
+  import { createDictation } from "../lib/dictation.js";
+
+  const noteInput = document.querySelector("#noteInput") as HTMLTextAreaElement;
+  const charCount = document.querySelector("#charCount") as HTMLElement;
+  const analyzeBtn = document.querySelector("#analyzeBtn") as HTMLButtonElement;
+  const progressFill = document.querySelector("#progressFill") as HTMLElement;
+  const progressTrack = document.querySelector("#progressTrack") as HTMLElement;
+  const statusMsg = document.querySelector("#statusMsg") as HTMLElement;
+  const output = document.querySelector("#output") as HTMLElement;
+
+  function updateCharCount() {
+    const count = noteInput.value.length;
+    charCount.textContent = `${count} character${count !== 1 ? "s" : ""}`;
+  }
+
+  function setProgress(percent: number, message: string, state = "") {
+    progressFill.style.width = percent + "%";
+    progressTrack.setAttribute("aria-valuenow", String(percent));
+    statusMsg.textContent = message;
+    statusMsg.className = "status-msg" + (state ? " " + state : "");
+  }
+
+  function setLoading(on: boolean) {
+    analyzeBtn.disabled = on;
+    analyzeBtn.innerHTML = on ? '<span class="spinner"></span> Analyzing…' : "🧠 Analyze Note";
+  }
+
+  const dictation = createDictation({
+    textarea: noteInput,
+    button: document.querySelector("#micBtn"),
+    onTranscript: updateCharCount,
+    onStart: () => track("dictation_started"),
+  });
+
+  noteInput.addEventListener("input", updateCharCount);
+
+  async function sendNote() {
+    const note = noteInput.value.trim();
+    if (!note) {
+      setProgress(0, "Please enter a clinical note.", "error");
+      return;
+    }
+    dictation?.stop();
+
+    output.className = "";
+    output.innerHTML = "";
+    track("analyze_clicked");
+    setLoading(true);
+    setProgress(20, "Sending to AI…", "active");
+
+    let progress = 20;
+    const ticker = window.setInterval(() => {
+      progress = Math.min(progress + 3, 85);
+      progressFill.style.width = progress + "%";
+      progressTrack.setAttribute("aria-valuenow", String(progress));
+    }, 300);
+
+    try {
+      const data = await api("/api/extract", {
+        method: "POST",
+        body: JSON.stringify({ note }),
+      });
+      const result = data.result;
+      const found =
+        (result.confirmed_codes?.length || 0) + (result.suggested_codes?.length || 0);
+      setProgress(100, `Done — ${found} code${found !== 1 ? "s" : ""}`, "success");
+      output.innerHTML = result.raw ? formatRaw(result) : formatResults(result);
+      // #output is display:none until this class lands, and sendNote() clears
+      // className on every run -- so it has to be re-applied, not set once.
+      output.className = "visible";
+      initResultInteractions(output);
+    } catch (error: any) {
+      // api() redirects on 401, so reaching here means a genuine failure.
+      setProgress(0, "Extraction failed", "error");
+      output.innerHTML = formatError(error.message);
+      output.className = "visible";
+    } finally {
+      window.clearInterval(ticker);
+      setLoading(false);
+    }
+  }
+
+  analyzeBtn.addEventListener("click", sendNote);
+  noteInput.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") sendNote();
+  });
+
+  (async () => {
+    try {
+      const me = await api("/api/me");
+      const username = document.querySelector("#username");
+      if (username) username.textContent = me.full_name || me.email;
+      if (me.is_admin) {
+        const nav = document.querySelector(".nav-user");
+        const link = document.createElement("a");
+        link.href = "/admin";
+        link.textContent = "Admin";
+        link.className = "nav-admin-link";
+        nav?.insertBefore(link, nav.firstChild);
+      }
+      track("page_view");
+    } catch {
+      logout();
+    }
+  })();
+</script>
+
+<style>
+  /* ── MAIN LAYOUT ── */
+  main {
+    flex: 1;
+    max-width: 920px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 3rem 2rem 5rem;
+  }
+
+  /* ── PAGE HEADER ── */
+  .page-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+    animation: fadeUp 0.6s ease both;
+  }
+
+  .page-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 50px;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--teal-text);
+    margin-bottom: 1.2rem;
+    box-shadow: 0 2px 10px rgba(0,194,168,0.08);
+  }
+  .badge-dot {
+    width: 6px; height: 6px;
+    background: var(--teal);
+    border-radius: 50%;
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.5); }
+  }
+
+  .page-header h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(2rem, 4vw, 2.8rem);
+    letter-spacing: -1.5px;
+    color: var(--navy);
+    line-height: 1.1;
+    margin-bottom: 0.7rem;
+  }
+  .page-header h1 em { font-style: italic; color: var(--teal-text); }
+
+  .page-header p {
+    font-size: 1rem;
+    color: var(--text-mid);
+    line-height: 1.65;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--white);
+    border-radius: 22px;
+    border: 1px solid var(--line);
+    box-shadow: 0 8px 40px rgba(10,22,40,0.08);
+    overflow: hidden;
+    animation: fadeUp 0.6s 0.1s ease both;
+  }
+
+  .card-chrome {
+    background: #f0ede6;
+    border-bottom: 1px solid var(--line);
+    padding: 0.7rem 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .chrome-dot { width: 11px; height: 11px; border-radius: 50%; }
+  .chrome-dot:nth-child(1) { background: #ff5f57; }
+  .chrome-dot:nth-child(2) { background: #febc2e; }
+  .chrome-dot:nth-child(3) { background: #28c840; }
+  .chrome-title {
+    margin-left: 0.5rem;
+    font-size: 0.73rem;
+    font-weight: 600;
+    color: var(--text-light);
+    letter-spacing: 0.04em;
+  }
+
+  .card-body { padding: 2rem 2.2rem; }
+
+  /* ── FORM ── */
+  .field-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-light);
+    margin-bottom: 0.6rem;
+    display: block;
+  }
+
+  .textarea-wrap {
+    position: relative;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 140px;
+    padding: 1rem 1.2rem;
+    font-size: 0.93rem;
+    font-family: 'DM Sans', sans-serif;
+    background: var(--cream);
+    border: 1.5px solid var(--line);
+    color: var(--text-dark);
+    border-radius: 12px;
+    resize: vertical;
+    line-height: 1.65;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+  }
+  textarea::placeholder { color: var(--text-light); font-style: italic; }
+  textarea:focus {
+    border-color: var(--teal-text);
+    box-shadow: 0 0 0 3px rgba(0,194,168,0.1);
+  }
+  textarea.listening {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 3px rgba(239,68,68,0.1);
+  }
+
+  .form-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.2rem;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+  }
+
+  .form-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+
+  .char-count {
+    font-size: 0.78rem;
+    color: var(--text-light);
+  }
+
+  /* ── BUTTONS ── */
+  .btn-analyze {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--navy);
+    color: var(--white);
+    padding: 0.8rem 1.8rem;
+    border-radius: 50px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+    box-shadow: 0 4px 16px rgba(10,22,40,0.18);
+  }
+  .btn-analyze:hover:not(:disabled) {
+    background: var(--teal);
+    color: var(--navy);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0,194,168,0.28);
+  }
+  .btn-analyze:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  /* Mic button */
+  .btn-mic {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--white);
+    color: var(--text-mid);
+    padding: 0.8rem 1.2rem;
+    border-radius: 50px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    border: 1.5px solid var(--line);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-mic:hover { border-color: var(--teal-text); color: var(--teal-text); }
+  .btn-mic.listening {
+    background: rgba(239,68,68,0.08);
+    border-color: #ef4444;
+    color: #ef4444;
+  }
+  .btn-mic.listening .mic-pulse {
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .mic-no-support { display: none; }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: var(--line);
+    margin: 1.8rem 0;
+  }
+
+  /* ── STATUS ── */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 1.4rem;
+    min-height: 24px;
+  }
+
+  .status-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-light);
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: var(--cream-dark);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--teal), var(--teal-light));
+    border-radius: 99px;
+    transition: width 0.3s ease;
+  }
+
+  .status-msg {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-light);
+    white-space: nowrap;
+  }
+  .status-msg.active { color: var(--teal-text); }
+  .status-msg.done   { color: var(--success); }
+  .status-msg.error  { color: var(--danger); }
+
+  /* ── RESULTS ── */
+  #output { display: none; }
+  #output.visible { display: block; animation: fadeUp 0.5s ease both; }
+
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.85) translateY(6px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+  }
+
+  thead th {
+    background: var(--navy);
+    color: var(--teal-text);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.9rem 1rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--line);
+    transition: background 0.15s;
+    animation: fadeUp 0.35s ease both;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(0,194,168,0.04); }
+
+  tbody td {
+    padding: 0.9rem 1rem;
+    color: var(--text-dark);
+    vertical-align: middle;
+    line-height: 1.5;
+  }
+  .suggested-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.1rem;
+    color: var(--navy);
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: var(--white);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+
+  @media (max-width: 600px) {
+    .nav-links { display: none; }
+    .card-body { padding: 1.4rem; }
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Raw-result fallback and the suggested-codes note, previously written as
+     inline style attributes in the JavaScript. */
+  .raw-result {
+    font-size: 0.85rem;
+    color: var(--text-mid);
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  .suggested-note {
+    font-size: 0.82rem;
+    color: var(--text-light);
+    margin-bottom: 0.8rem;
+  }
+
+</style>

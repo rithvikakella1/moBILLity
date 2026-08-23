@@ -1,0 +1,1050 @@
+{
+  "_status": "STARTER SET - NOT CODER-VERIFIED",
+  "_warning": [
+    "These notes are synthetic and contain no real patient data. The expected",
+    "codes were assigned from standard ICD-10-CM/CPT/HCPCS references, NOT",
+    "reviewed by a certified coder. Treat the resulting numbers as a regression",
+    "baseline for prompt and model changes, not as a publishable accuracy claim.",
+    "In the 12-case version, three of the expected sets were wrong and the",
+    "benchmark blamed the model for them -- assume some of these are wrong too",
+    "until a working coder has reviewed every expected set below."
+  ],
+  "_conventions": [
+    "Where a code requires specificity (laterality, episode of care, severity,",
+    "encounter), the note states it explicitly. Otherwise the benchmark measures",
+    "disagreement about documentation-interpretation rules rather than extraction.",
+    "E/M codes appear only where total time is stated, using the 2021+ thresholds",
+    "(established 99212 10-19min, 99213 20-29, 99214 30-39; new 99203 30-44).",
+    "Most cases mention orally prescribed drugs and expect NO HCPCS code: billing",
+    "a J-code for an outpatient prescription is a known failure mode, and these",
+    "cases are the negative controls for it."
+  ],
+  "cases": [
+    {
+      "id": "dm2-uncomplicated",
+      "note": "Established patient here for routine follow-up of type 2 diabetes mellitus without complications. A1c 6.9%, stable on metformin. No retinopathy, neuropathy, or nephropathy documented. Total time 25 minutes.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.9"
+        ],
+        "CPT": [
+          "99213"
+        ]
+      }
+    },
+    {
+      "id": "dm2-neuropathy",
+      "note": "Established patient, 58F, office visit 25 minutes total time for follow-up of type 2 diabetes without complications. A1c reviewed at 8.2%, metformin dose increased. Also reports burning in both feet at night for the past three months; monofilament testing not performed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.9",
+          "E11.42"
+        ],
+        "CPT": [
+          "99213"
+        ]
+      }
+    },
+    {
+      "id": "dm2-hyperglycemia",
+      "note": "Type 2 diabetes mellitus with hyperglycemia. Fasting glucose 268 mg/dL today, patient reports missing several doses of metformin. Assessment: type 2 diabetes with hyperglycemia. Medication adherence counseling provided.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.65"
+        ]
+      }
+    },
+    {
+      "id": "dm2-ckd-stage3",
+      "note": "Follow-up for type 2 diabetes mellitus with diabetic chronic kidney disease. eGFR 48, stable. Assessment: type 2 diabetes with diabetic chronic kidney disease, stage 3a. Lisinopril continued for renal protection.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.22",
+          "N18.31"
+        ]
+      }
+    },
+    {
+      "id": "dm1-uncomplicated",
+      "note": "Young adult with type 1 diabetes mellitus without complications, on insulin pump therapy. A1c 7.1%. No evidence of retinopathy, neuropathy, or nephropathy. Pump settings reviewed.",
+      "expected": {
+        "ICD-10-CM": [
+          "E10.9"
+        ]
+      }
+    },
+    {
+      "id": "htn-routine",
+      "note": "Established patient presents for routine follow-up of essential hypertension. Blood pressure 142/88 today. Lisinopril 10mg continued. No chest pain, no shortness of breath. Total time 15 minutes.",
+      "expected": {
+        "ICD-10-CM": [
+          "I10"
+        ],
+        "CPT": [
+          "99212"
+        ]
+      }
+    },
+    {
+      "id": "hyperlipidemia",
+      "note": "Follow-up for hyperlipidemia. Fasting lipid panel reviewed: LDL 165, HDL 38, triglycerides 190. Atorvastatin started. Diet and exercise counseling provided.",
+      "expected": {
+        "ICD-10-CM": [
+          "E78.5"
+        ]
+      }
+    },
+    {
+      "id": "pure-hypercholesterolemia",
+      "note": "Assessment: pure hypercholesterolemia. LDL 192 with normal triglycerides at 110. Rosuvastatin initiated. Repeat lipid panel in 12 weeks.",
+      "expected": {
+        "ICD-10-CM": [
+          "E78.00"
+        ]
+      }
+    },
+    {
+      "id": "copd-exacerbation",
+      "note": "Known COPD patient presents with three days of increased dyspnea, increased sputum volume and purulence. Wheezing throughout. Oxygen saturation 91% on room air. Assessment: acute exacerbation of COPD. Prednisone burst and azithromycin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J44.1"
+        ]
+      }
+    },
+    {
+      "id": "copd-stable",
+      "note": "Routine follow-up of chronic obstructive pulmonary disease. No exacerbation since last visit. Stable on tiotropium. Oxygen saturation 95% on room air, lungs with mildly diminished breath sounds bilaterally.",
+      "expected": {
+        "ICD-10-CM": [
+          "J44.9"
+        ]
+      }
+    },
+    {
+      "id": "asthma-mild-intermittent",
+      "note": "Established patient with a history of mild intermittent asthma, here for routine review. No exacerbation since last visit, using albuterol less than twice weekly. Lungs clear to auscultation. Continue current regimen.",
+      "expected": {
+        "ICD-10-CM": [
+          "J45.20"
+        ]
+      }
+    },
+    {
+      "id": "asthma-moderate-persistent",
+      "note": "Assessment: moderate persistent asthma, uncomplicated. Daily symptoms controlled on medium-dose inhaled corticosteroid. No exacerbation currently. Spacer technique reviewed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J45.40"
+        ]
+      }
+    },
+    {
+      "id": "asthma-exacerbation",
+      "note": "Patient presents with wheezing and shortness of breath worsening over two days. Peak flow reduced from baseline. Assessment: asthma with acute exacerbation. Nebulized albuterol given in office with improvement, oral prednisone prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J45.901"
+        ]
+      }
+    },
+    {
+      "id": "ckd-stage4",
+      "note": "Follow-up chronic kidney disease. eGFR 22, stable over three months. Assessment: chronic kidney disease, stage 4. Nephrology co-management continued, phosphate binder reviewed.",
+      "expected": {
+        "ICD-10-CM": [
+          "N18.4"
+        ]
+      }
+    },
+    {
+      "id": "chf-systolic-chronic",
+      "note": "Follow-up for chronic systolic congestive heart failure. Ejection fraction 32% on recent echocardiogram. Euvolemic today, no orthopnea. Carvedilol and furosemide continued.",
+      "expected": {
+        "ICD-10-CM": [
+          "I50.22"
+        ]
+      }
+    },
+    {
+      "id": "afib-paroxysmal",
+      "note": "Established patient with paroxysmal atrial fibrillation. Currently in sinus rhythm on exam and EKG. Apixaban continued, no bleeding. Rate control stable on metoprolol.",
+      "expected": {
+        "ICD-10-CM": [
+          "I48.0"
+        ]
+      }
+    },
+    {
+      "id": "hypothyroidism",
+      "note": "Follow-up for hypothyroidism. TSH 3.1 on current levothyroxine dose, within target. No fatigue, cold intolerance, or weight change. Continue same dose.",
+      "expected": {
+        "ICD-10-CM": [
+          "E03.9"
+        ]
+      }
+    },
+    {
+      "id": "gerd",
+      "note": "Assessment: gastroesophageal reflux disease without esophagitis. Symptoms well controlled on omeprazole. No dysphagia, no weight loss, no melena.",
+      "expected": {
+        "ICD-10-CM": [
+          "K21.9"
+        ]
+      }
+    },
+    {
+      "id": "osa-followup",
+      "note": "Follow-up for obstructive sleep apnea. Compliant with CPAP, averaging 6.5 hours nightly. Daytime somnolence resolved. No mask leak issues reported.",
+      "expected": {
+        "ICD-10-CM": [
+          "G47.33"
+        ]
+      }
+    },
+    {
+      "id": "bph-with-luts",
+      "note": "Assessment: benign prostatic hyperplasia with lower urinary tract symptoms. Nocturia three times nightly, weak stream. Tamsulosin started. PSA within normal limits.",
+      "expected": {
+        "ICD-10-CM": [
+          "N40.1"
+        ]
+      }
+    },
+    {
+      "id": "oa-knee-right",
+      "note": "Assessment: unilateral primary osteoarthritis of the right knee. Radiographs show medial joint space narrowing. Pain with weight bearing. Physical therapy referral and acetaminophen recommended.",
+      "expected": {
+        "ICD-10-CM": [
+          "M17.11"
+        ]
+      }
+    },
+    {
+      "id": "iron-deficiency-anemia",
+      "note": "Assessment: iron deficiency anemia. Hemoglobin 10.2, ferritin 8, MCV 74. Oral ferrous sulfate started. Colonoscopy referral placed to evaluate source.",
+      "expected": {
+        "ICD-10-CM": [
+          "D50.9"
+        ]
+      }
+    },
+    {
+      "id": "morbid-obesity",
+      "note": "Assessment: morbid obesity due to excess calories. BMI calculated at 42.3 today. Nutrition referral placed, bariatric surgery options discussed.",
+      "expected": {
+        "ICD-10-CM": [
+          "E66.01",
+          "Z68.41"
+        ]
+      }
+    },
+    {
+      "id": "strep-pharyngitis",
+      "note": "Patient presents with sore throat and fever, 101.2F. Tonsillar exudate noted on exam. Rapid strep antigen test positive. Amoxicillin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J02.0"
+        ]
+      }
+    },
+    {
+      "id": "viral-pharyngitis",
+      "note": "Sore throat for two days with rhinorrhea and cough. No tonsillar exudate. Rapid strep antigen test negative. Assessment: acute pharyngitis, viral. Supportive care advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "J02.9"
+        ]
+      }
+    },
+    {
+      "id": "acute-maxillary-sinusitis",
+      "note": "Ten days of facial pressure, purulent nasal discharge, and maxillary tenderness. Assessment: acute maxillary sinusitis. Amoxicillin-clavulanate prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J01.00"
+        ]
+      }
+    },
+    {
+      "id": "otitis-media-right",
+      "note": "Child with right ear pain and fever. Right tympanic membrane erythematous and bulging, no perforation. Assessment: acute suppurative otitis media of the right ear without spontaneous rupture. Amoxicillin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "H66.001"
+        ]
+      }
+    },
+    {
+      "id": "otitis-externa-left",
+      "note": "Left ear pain after swimming. Canal erythematous and edematous with debris, tragal tenderness present. Tympanic membrane intact. Assessment: acute swimmer's ear, left ear. Ciprofloxacin-dexamethasone otic drops prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "H60.332"
+        ]
+      }
+    },
+    {
+      "id": "uti-uncomplicated",
+      "note": "Adult female with two days of dysuria and urinary frequency. Urinalysis shows positive leukocyte esterase and nitrites. No flank pain, no fever. Assessment: uncomplicated urinary tract infection. Nitrofurantoin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "N39.0"
+        ]
+      }
+    },
+    {
+      "id": "acute-cystitis",
+      "note": "Assessment: acute cystitis without hematuria. Suprapubic discomfort and urgency for three days. Urine culture sent. No fever, no costovertebral angle tenderness. Trimethoprim-sulfamethoxazole prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "N30.00"
+        ]
+      }
+    },
+    {
+      "id": "cellulitis-right-lower-leg",
+      "note": "Assessment: cellulitis of the right lower limb. Warm, erythematous, tender area over the right shin with demarcated borders. No abscess or fluctuance. No fever. Cephalexin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "L03.115"
+        ]
+      }
+    },
+    {
+      "id": "conjunctivitis-right",
+      "note": "Right eye redness and watery discharge for two days. No pain, no vision change, no photophobia. Assessment: acute conjunctivitis, right eye. Supportive care and hygiene advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "H10.31"
+        ]
+      }
+    },
+    {
+      "id": "influenza",
+      "note": "Abrupt onset fever, myalgia, headache, and dry cough. Rapid influenza test positive. Assessment: influenza with other respiratory manifestations. Oseltamivir prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J11.1"
+        ]
+      }
+    },
+    {
+      "id": "covid-19",
+      "note": "Fever, cough, and loss of taste for three days. SARS-CoV-2 PCR positive. Assessment: COVID-19. Isolation instructions given, supportive care advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "U07.1"
+        ]
+      }
+    },
+    {
+      "id": "community-acquired-pneumonia",
+      "note": "Productive cough, fever, and pleuritic chest pain. Chest x-ray shows right lower lobe infiltrate. Assessment: community-acquired pneumonia, organism unspecified. Amoxicillin prescribed, outpatient management.",
+      "expected": {
+        "ICD-10-CM": [
+          "J18.9"
+        ]
+      }
+    },
+    {
+      "id": "acute-bronchitis",
+      "note": "Productive cough for eight days with low-grade fever. Chest auscultation reveals scattered rhonchi, no focal consolidation. Chest x-ray not indicated. Assessment: acute bronchitis. Supportive care advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "J20.9"
+        ]
+      }
+    },
+    {
+      "id": "viral-gastroenteritis",
+      "note": "Three days of watery diarrhea and vomiting, now improving. No blood in stool, no recent travel or antibiotics. Assessment: viral gastroenteritis. Oral rehydration advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "A08.4"
+        ]
+      }
+    },
+    {
+      "id": "impetigo",
+      "note": "Child with honey-crusted lesions around the nares. No systemic symptoms. Assessment: impetigo. Topical mupirocin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "L01.00"
+        ]
+      }
+    },
+    {
+      "id": "tinea-pedis",
+      "note": "Itching and scaling between the toes bilaterally with maceration. Assessment: tinea pedis. Topical terbinafine prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "B35.3"
+        ]
+      }
+    },
+    {
+      "id": "herpes-zoster",
+      "note": "Painful vesicular rash in a single dermatomal distribution on the left trunk, not crossing midline. No ocular involvement. Assessment: herpes zoster without complications. Valacyclovir prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "B02.9"
+        ]
+      }
+    },
+    {
+      "id": "acute-laryngitis",
+      "note": "Hoarseness and voice loss for four days following an upper respiratory infection. No stridor, no dysphagia. Assessment: acute laryngitis. Voice rest and hydration advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "J04.0"
+        ]
+      }
+    },
+    {
+      "id": "allergic-rhinitis-seasonal",
+      "note": "Sneezing, nasal itching, and clear rhinorrhea every spring. Assessment: allergic rhinitis due to pollen. Intranasal fluticasone prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J30.1"
+        ]
+      }
+    },
+    {
+      "id": "ankle-sprain-with-orthosis",
+      "note": "Patient inverted the right ankle stepping off a curb yesterday. Swelling and tenderness over the lateral malleolus. Able to bear weight. Ottawa rules negative, no imaging obtained. Assessment: acute sprain of right ankle, initial encounter. A prefabricated off-the-shelf ankle gauntlet orthosis was dispensed in the office today.",
+      "expected": {
+        "ICD-10-CM": [
+          "S93.401A"
+        ],
+        "HCPCS": [
+          "L1902"
+        ]
+      }
+    },
+    {
+      "id": "ankle-sprain-left",
+      "note": "Twisted the left ankle playing basketball this morning. Lateral swelling and tenderness, able to bear weight. Assessment: sprain of the left ankle, initial encounter. RICE advised, no durable medical equipment dispensed.",
+      "expected": {
+        "ICD-10-CM": [
+          "S93.402A"
+        ]
+      }
+    },
+    {
+      "id": "distal-radius-fracture-right",
+      "note": "Fall on outstretched right hand today. Wrist deformity and tenderness. Radiographs confirm a closed fracture of the lower end of the right radius. Assessment: fracture of lower end of right radius, initial encounter for closed fracture. Sugar-tong splint applied.",
+      "expected": {
+        "ICD-10-CM": [
+          "S52.501A"
+        ],
+        "HCPCS": [
+          "A4570"
+        ]
+      }
+    },
+    {
+      "id": "laceration-repair-forearm",
+      "note": "Patient sustained a 2.5 cm linear laceration to the right forearm on a metal edge earlier today. Wound clean, no foreign body, no tendon or nerve involvement. Simple one-layer closure performed with 5-0 nylon. Tetanus up to date.",
+      "expected": {
+        "ICD-10-CM": [
+          "S51.811A"
+        ],
+        "CPT": [
+          "12001"
+        ]
+      }
+    },
+    {
+      "id": "laceration-repair-scalp",
+      "note": "Patient struck the scalp on a cabinet door, sustaining a 3.5 cm laceration without foreign body. Simple single-layer closure with staples performed today. Assessment: laceration of scalp, initial encounter.",
+      "expected": {
+        "ICD-10-CM": [
+          "S01.01XA"
+        ],
+        "CPT": [
+          "12002"
+        ]
+      }
+    },
+    {
+      "id": "low-back-pain",
+      "note": "Three weeks of low back pain without radiation. No red flags, no numbness or weakness, normal neurologic exam. Assessment: low back pain. Physical therapy and NSAIDs recommended.",
+      "expected": {
+        "ICD-10-CM": [
+          "M54.50"
+        ]
+      }
+    },
+    {
+      "id": "oa-knee-left",
+      "note": "Assessment: unilateral primary osteoarthritis of the left knee. Crepitus and pain with range of motion. Radiographs show joint space narrowing. Weight loss and physical therapy discussed.",
+      "expected": {
+        "ICD-10-CM": [
+          "M17.12"
+        ]
+      }
+    },
+    {
+      "id": "shoulder-impingement-right",
+      "note": "Right shoulder pain with overhead activity. Positive Neer and Hawkins tests. Assessment: impingement syndrome of the right shoulder. Physical therapy referral placed.",
+      "expected": {
+        "ICD-10-CM": [
+          "M75.41"
+        ]
+      }
+    },
+    {
+      "id": "carpal-tunnel-right",
+      "note": "Numbness and tingling in the right thumb, index, and middle fingers, worse at night. Positive Tinel and Phalen signs on the right. Assessment: carpal tunnel syndrome, right upper limb. Night splinting advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "G56.01"
+        ]
+      }
+    },
+    {
+      "id": "plantar-fasciitis",
+      "note": "Heel pain worst with first steps in the morning. Tenderness at the medial calcaneal tubercle. Assessment: plantar fasciitis. Stretching program and supportive footwear advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "M72.2"
+        ]
+      }
+    },
+    {
+      "id": "knee-contusion-right",
+      "note": "Direct blow to the right knee in a fall yesterday. Ecchymosis and tenderness, no effusion, full range of motion, ligaments stable. Assessment: contusion of the right knee, initial encounter.",
+      "expected": {
+        "ICD-10-CM": [
+          "S80.01XA"
+        ]
+      }
+    },
+    {
+      "id": "lateral-epicondylitis-right",
+      "note": "Right elbow pain with gripping and wrist extension. Tenderness over the lateral epicondyle. Assessment: lateral epicondylitis, right elbow. Counterforce brace and activity modification advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "M77.11"
+        ]
+      }
+    },
+    {
+      "id": "cervical-strain",
+      "note": "Rear-end motor vehicle collision two days ago. Posterior neck pain and stiffness, no neurologic deficit, no midline bony tenderness. Assessment: strain of neck muscle, initial encounter.",
+      "expected": {
+        "ICD-10-CM": [
+          "S16.1XXA"
+        ]
+      }
+    },
+    {
+      "id": "gout-right-foot",
+      "note": "Acute onset severe pain, redness, and swelling of the right first metatarsophalangeal joint overnight. Serum uric acid elevated. Assessment: idiopathic gout, right foot. Indomethacin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "M10.071"
+        ]
+      }
+    },
+    {
+      "id": "achilles-tendinitis-left",
+      "note": "Posterior left ankle pain with running. Tenderness and thickening of the Achilles tendon, no palpable gap, Thompson test negative. Assessment: Achilles tendinitis, left leg. Eccentric loading program advised.",
+      "expected": {
+        "ICD-10-CM": [
+          "M76.62"
+        ]
+      }
+    },
+    {
+      "id": "frozen-shoulder-left",
+      "note": "Progressive left shoulder stiffness over four months with global restriction of both active and passive range of motion. Assessment: adhesive capsulitis of the left shoulder. Physical therapy referral placed.",
+      "expected": {
+        "ICD-10-CM": [
+          "M75.02"
+        ]
+      }
+    },
+    {
+      "id": "knee-injection-right",
+      "note": "Right knee osteoarthritis with persistent pain despite conservative therapy. Assessment: unilateral primary osteoarthritis of the right knee. Arthrocentesis of the right knee performed with injection of 40 mg methylprednisolone acetate under sterile technique.",
+      "expected": {
+        "ICD-10-CM": [
+          "M17.11"
+        ],
+        "CPT": [
+          "20610"
+        ],
+        "HCPCS": [
+          "J1030"
+        ]
+      }
+    },
+    {
+      "id": "cerumen-removal-right",
+      "note": "Right ear fullness and decreased hearing. Otoscopy shows impacted cerumen obscuring the right tympanic membrane. Assessment: impacted cerumen, right ear. Removal of impacted cerumen performed by instrumentation, right ear.",
+      "expected": {
+        "ICD-10-CM": [
+          "H61.21"
+        ],
+        "CPT": [
+          "69210"
+        ]
+      }
+    },
+    {
+      "id": "ekg-palpitations",
+      "note": "Patient reports intermittent palpitations for one week. Twelve-lead electrocardiogram performed in office with interpretation and report: normal sinus rhythm, no ischemic changes. Assessment: palpitations.",
+      "expected": {
+        "ICD-10-CM": [
+          "R00.2"
+        ],
+        "CPT": [
+          "93000"
+        ]
+      }
+    },
+    {
+      "id": "spirometry-copd",
+      "note": "Chronic obstructive pulmonary disease, stable. Spirometry performed today with graphic tracing and interpretation, showing an FEV1/FVC ratio of 0.62. Assessment: COPD, unspecified.",
+      "expected": {
+        "ICD-10-CM": [
+          "J44.9"
+        ],
+        "CPT": [
+          "94010"
+        ]
+      }
+    },
+    {
+      "id": "abscess-incision-drainage",
+      "note": "Fluctuant abscess of the right axilla, 2 cm. Assessment: cutaneous abscess of the right axilla. Simple incision and drainage performed under local anesthesia, purulent material expressed, packing placed.",
+      "expected": {
+        "ICD-10-CM": [
+          "L02.411"
+        ],
+        "CPT": [
+          "10060"
+        ]
+      }
+    },
+    {
+      "id": "plantar-wart-destruction",
+      "note": "Single painful plantar wart on the left sole. Assessment: plantar wart. Destruction of the lesion performed by cryotherapy today.",
+      "expected": {
+        "ICD-10-CM": [
+          "B07.0"
+        ],
+        "CPT": [
+          "17110"
+        ]
+      }
+    },
+    {
+      "id": "nail-avulsion",
+      "note": "Ingrown toenail of the right great toe with lateral nail fold inflammation. Assessment: ingrowing nail. Partial avulsion of the nail plate performed under digital block.",
+      "expected": {
+        "ICD-10-CM": [
+          "L60.0"
+        ],
+        "CPT": [
+          "11730"
+        ]
+      }
+    },
+    {
+      "id": "ceftriaxone-injection",
+      "note": "Cellulitis of the left lower limb, moderate. Assessment: cellulitis of left lower limb. Ceftriaxone 250 mg administered by intramuscular injection in the office today, followed by oral cephalexin.",
+      "expected": {
+        "ICD-10-CM": [
+          "L03.116"
+        ],
+        "CPT": [
+          "96372"
+        ],
+        "HCPCS": [
+          "J0696"
+        ]
+      }
+    },
+    {
+      "id": "influenza-vaccine",
+      "note": "Patient presents for seasonal influenza immunization. Quadrivalent inactivated influenza vaccine administered intramuscularly in the left deltoid. Assessment: encounter for immunization.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z23"
+        ],
+        "CPT": [
+          "90686",
+          "90471"
+        ]
+      }
+    },
+    {
+      "id": "tdap-vaccine",
+      "note": "Patient due for tetanus booster. Tdap vaccine administered intramuscularly today. Assessment: encounter for immunization.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z23"
+        ],
+        "CPT": [
+          "90715",
+          "90471"
+        ]
+      }
+    },
+    {
+      "id": "urinalysis-in-office",
+      "note": "Dysuria and frequency for two days. Non-automated urinalysis without microscopy performed in office: positive nitrites and leukocyte esterase. Assessment: urinary tract infection, site not specified.",
+      "expected": {
+        "ICD-10-CM": [
+          "N39.0"
+        ],
+        "CPT": [
+          "81002"
+        ]
+      }
+    },
+    {
+      "id": "rapid-strep-in-office",
+      "note": "Sore throat with fever and tonsillar exudate. Rapid streptococcus group A antigen test performed in office, result positive. Assessment: streptococcal pharyngitis. Penicillin prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "J02.0"
+        ],
+        "CPT": [
+          "87880"
+        ]
+      }
+    },
+    {
+      "id": "trigger-point-injection",
+      "note": "Persistent myofascial pain in the trapezius with two discrete trigger points. Assessment: myalgia. Trigger point injection performed into two muscle groups with lidocaine.",
+      "expected": {
+        "ICD-10-CM": [
+          "M79.10"
+        ],
+        "CPT": [
+          "20552"
+        ]
+      }
+    },
+    {
+      "id": "skin-tag-removal",
+      "note": "Multiple irritated skin tags in the right axilla, eight lesions removed today by snip excision. Assessment: acrochordon.",
+      "expected": {
+        "ICD-10-CM": [
+          "L91.8"
+        ],
+        "CPT": [
+          "11200"
+        ]
+      }
+    },
+    {
+      "id": "shoulder-injection-left",
+      "note": "Left shoulder adhesive capsulitis with persistent pain. Assessment: adhesive capsulitis of the left shoulder. Subacromial injection of 40 mg methylprednisolone acetate performed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "M75.02"
+        ],
+        "CPT": [
+          "20610"
+        ],
+        "HCPCS": [
+          "J1030"
+        ]
+      }
+    },
+    {
+      "id": "annual-wellness-visit",
+      "note": "Medicare patient presents for a subsequent annual wellness visit. Health risk assessment completed, personalized prevention plan updated, cognitive assessment performed. Assessment: encounter for general adult medical examination without abnormal findings.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z00.00"
+        ],
+        "HCPCS": [
+          "G0439"
+        ]
+      }
+    },
+    {
+      "id": "colorectal-screening",
+      "note": "Average-risk patient presents to discuss colorectal cancer screening. Screening colonoscopy ordered. Assessment: encounter for screening for malignant neoplasm of the colon.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z12.11"
+        ]
+      }
+    },
+    {
+      "id": "mammogram-screening",
+      "note": "Asymptomatic patient with no breast complaints. Screening mammogram ordered. Assessment: encounter for screening mammogram for malignant neoplasm of breast.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z12.31"
+        ]
+      }
+    },
+    {
+      "id": "lipid-screening",
+      "note": "Asymptomatic adult, no known lipid disorder. Screening fasting lipid panel ordered. Assessment: encounter for screening for lipoid disorders.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z13.220"
+        ]
+      }
+    },
+    {
+      "id": "depression-screening",
+      "note": "Routine visit with standardized depression screening performed using PHQ-9, scored and documented, result negative. Assessment: encounter for screening for depression.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z13.31"
+        ],
+        "CPT": [
+          "96127"
+        ]
+      }
+    },
+    {
+      "id": "well-child-visit",
+      "note": "Routine well child examination for an established 8-year-old patient, no abnormal findings. Growth and development appropriate for age. Anticipatory guidance provided.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z00.129"
+        ],
+        "CPT": [
+          "99393"
+        ]
+      }
+    },
+    {
+      "id": "contraceptive-management",
+      "note": "Patient presents for routine surveillance of her established oral contraceptive pills. No side effects, blood pressure normal. Refill provided. Assessment: encounter for surveillance of contraceptive pills.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z30.41"
+        ]
+      }
+    },
+    {
+      "id": "tobacco-cessation-counseling",
+      "note": "Patient smokes one pack daily and wishes to quit. Nicotine dependence, cigarettes, uncomplicated. Smoking cessation counseling provided for 6 minutes, intermediate. Nicotine patch prescribed.",
+      "expected": {
+        "ICD-10-CM": [
+          "F17.210"
+        ],
+        "CPT": [
+          "99406"
+        ]
+      }
+    },
+    {
+      "id": "covid-exposure-screening",
+      "note": "Asymptomatic patient with known close contact to a confirmed COVID-19 case. No symptoms today. Assessment: contact with and suspected exposure to COVID-19. Testing performed and isolation guidance given.",
+      "expected": {
+        "ICD-10-CM": [
+          "Z20.822"
+        ]
+      }
+    },
+    {
+      "id": "cpap-for-osa",
+      "note": "Obstructive sleep apnea confirmed on polysomnography with AHI of 32. Assessment: obstructive sleep apnea. Continuous positive airway pressure device ordered with humidifier.",
+      "expected": {
+        "ICD-10-CM": [
+          "G47.33"
+        ],
+        "HCPCS": [
+          "E0601"
+        ]
+      }
+    },
+    {
+      "id": "crutches-dispensed",
+      "note": "Sprain of the left ankle sustained yesterday, initial encounter. Unable to bear weight comfortably. A pair of adjustable underarm aluminum crutches with pads, tips, and handgrips was dispensed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "S93.402A"
+        ],
+        "HCPCS": [
+          "E0114"
+        ]
+      }
+    },
+    {
+      "id": "walker-dispensed",
+      "note": "Elderly patient with unsteadiness on feet and two near-falls this month. Gait assessment performed. Assessment: unsteadiness on feet. A folding adjustable walker without wheels was dispensed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "R26.81"
+        ],
+        "HCPCS": [
+          "E0135"
+        ]
+      }
+    },
+    {
+      "id": "lumbar-orthosis",
+      "note": "Chronic low back pain without radiation. Assessment: low back pain. A prefabricated off-the-shelf lumbar-sacral orthosis was dispensed in the office today for activity support.",
+      "expected": {
+        "ICD-10-CM": [
+          "M54.50"
+        ],
+        "HCPCS": [
+          "L0650"
+        ]
+      }
+    },
+    {
+      "id": "glucose-monitor-supplies",
+      "note": "Type 2 diabetes mellitus without complications, requiring home glucose monitoring. A home blood glucose monitor and one box of fifty test strips were dispensed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.9"
+        ],
+        "HCPCS": [
+          "E0607",
+          "A4253"
+        ]
+      }
+    },
+    {
+      "id": "nebulizer-dispensed",
+      "note": "Chronic obstructive pulmonary disease, unspecified, with difficulty using a metered dose inhaler. A small volume nebulizer with compressor was dispensed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "J44.9"
+        ],
+        "HCPCS": [
+          "E0570"
+        ]
+      }
+    },
+    {
+      "id": "oxygen-concentrator",
+      "note": "Chronic obstructive pulmonary disease with resting oxygen saturation of 87% on room air, qualifying for home oxygen. A stationary oxygen concentrator was ordered today.",
+      "expected": {
+        "ICD-10-CM": [
+          "J44.9"
+        ],
+        "HCPCS": [
+          "E1390"
+        ]
+      }
+    },
+    {
+      "id": "wrist-splint-carpal-tunnel",
+      "note": "Carpal tunnel syndrome of the right upper limb with nocturnal symptoms. A prefabricated wrist hand orthosis, off the shelf, was dispensed for night use.",
+      "expected": {
+        "ICD-10-CM": [
+          "G56.01"
+        ],
+        "HCPCS": [
+          "L3908"
+        ]
+      }
+    },
+    {
+      "id": "diabetic-foot-inserts",
+      "note": "Type 2 diabetes mellitus with diabetic polyneuropathy, documented on monofilament testing with loss of protective sensation. Removable molded foot inserts were dispensed today.",
+      "expected": {
+        "ICD-10-CM": [
+          "E11.42"
+        ],
+        "HCPCS": [
+          "L3000"
+        ]
+      }
+    },
+    {
+      "id": "standard-wheelchair",
+      "note": "Patient with severe bilateral knee osteoarthritis unable to ambulate household distances. Assessment: bilateral primary osteoarthritis of knee. A standard manual wheelchair was ordered today.",
+      "expected": {
+        "ICD-10-CM": [
+          "M17.0"
+        ],
+        "HCPCS": [
+          "K0001"
+        ]
+      }
+    },
+    {
+      "id": "depression-initial",
+      "note": "New patient, 40 minutes total time. Reports two months of low mood, anhedonia, poor sleep, and difficulty concentrating. PHQ-9 score 16, consistent with moderate severity. No suicidal ideation. No prior psychiatric history. Assessment: major depressive disorder, single episode, moderate. Sertraline started.",
+      "expected": {
+        "ICD-10-CM": [
+          "F32.1"
+        ],
+        "CPT": [
+          "99203"
+        ]
+      }
+    },
+    {
+      "id": "depression-recurrent",
+      "note": "Established patient with a history of two prior depressive episodes, now with a recurrence over six weeks. PHQ-9 score 15, moderate severity. Assessment: major depressive disorder, recurrent, moderate. Dose of escitalopram increased.",
+      "expected": {
+        "ICD-10-CM": [
+          "F33.1"
+        ]
+      }
+    },
+    {
+      "id": "generalized-anxiety",
+      "note": "Six months of excessive worry across multiple domains with restlessness and poor sleep. GAD-7 score 14. Assessment: generalized anxiety disorder. Cognitive behavioural therapy referral placed.",
+      "expected": {
+        "ICD-10-CM": [
+          "F41.1"
+        ]
+      }
+    },
+    {
+      "id": "adhd-inattentive",
+      "note": "School-age child with longstanding inattention, distractibility, and disorganization without hyperactivity. Teacher and parent rating scales consistent. Assessment: attention-deficit hyperactivity disorder, predominantly inattentive type.",
+      "expected": {
+        "ICD-10-CM": [
+          "F90.0"
+        ]
+      }
+    },
+    {
+      "id": "insomnia",
+      "note": "Three months of difficulty initiating sleep with daytime fatigue. No sleep apnea symptoms. Assessment: insomnia, unspecified. Sleep hygiene counseling and cognitive behavioural therapy for insomnia recommended.",
+      "expected": {
+        "ICD-10-CM": [
+          "G47.00"
+        ]
+      }
+    },
+    {
+      "id": "migraine-without-aura",
+      "note": "Recurrent unilateral throbbing headaches with photophobia and nausea, roughly twice monthly. Patient confirms no aura precedes the headaches. Neurologic exam normal. Assessment: migraine without aura, not intractable, no status migrainosus. Sumatriptan prescribed for abortive use.",
+      "expected": {
+        "ICD-10-CM": [
+          "G43.009"
+        ]
+      }
+    },
+    {
+      "id": "epilepsy-followup",
+      "note": "Established patient with epilepsy, seizure free for 14 months on levetiracetam. Assessment: epilepsy, unspecified, not intractable, without status epilepticus. Continue current dose, driving restrictions reviewed.",
+      "expected": {
+        "ICD-10-CM": [
+          "G40.909"
+        ]
+      }
+    },
+    {
+      "id": "alcohol-use-disorder",
+      "note": "Patient reports drinking six to eight standard drinks daily with unsuccessful attempts to cut back and morning tremor. Assessment: alcohol dependence, uncomplicated. Naltrexone discussed and counseling referral placed.",
+      "expected": {
+        "ICD-10-CM": [
+          "F10.20"
+        ]
+      }
+    }
+  ]
+}

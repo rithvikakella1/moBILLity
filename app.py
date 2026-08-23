@@ -1,46 +1,58 @@
-import os
 import asyncio
-import json
-import re
 import base64
-import html
-import secrets
+import binascii
+import gzip
 import hashlib
 import hmac
+import html
+import json
 import logging
+import os
+import re
+import secrets
 import smtplib
 import sqlite3
-import urllib.parse
-from datetime import datetime, timedelta, timezone
+import threading
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
-from typing import Optional, Literal
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from dotenv import load_dotenv
+
 load_dotenv()  # loads .env before any os.getenv() calls
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from openai import OpenAI
-from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response as FastAPIResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
-from starlette.middleware.sessions import SessionMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 import bcrypt
 import httpx
-import psycopg
-from psycopg.rows import dict_row
+from authlib.integrations.starlette_client import OAuth, OAuthError
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import Response as FastAPIResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
+from openai import OpenAI
+from psycopg.rows import dict_row
+from pydantic import BaseModel, EmailStr
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.middleware.sessions import SessionMiddleware
+
+from logging_setup import configure_logging, request_id_var
 
 # ── SECURITY CONFIG ──────────────────────────────────────────────────────────
+configure_logging()
 logger = logging.getLogger("mobillity.auth")
+# Area-specific loggers so levels can be tuned independently.
+dispatch_logger = logging.getLogger("mobillity.dispatch")
+llm_logger = logging.getLogger("mobillity.llm")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 IS_PRODUCTION = ENVIRONMENT == "production"
 SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_hex(32)
@@ -56,6 +68,12 @@ ADMIN_EMAILS = {
 }
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy@example.com").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+# Pages are built by the Astro frontend and served from FRONTEND_BASE_URL, which
+# proxies /api, /auth, /webhooks, and /admin back here so the browser sees one
+# origin. Leaving this unset keeps the legacy HTML files serving from this
+# process, so the cut-over is a configuration change rather than a code change —
+# and is reversible the same way.
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "").rstrip("/")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", str(IS_PRODUCTION)).lower() == "true"
 
 if IS_PRODUCTION and (
@@ -67,15 +85,63 @@ if IS_PRODUCTION and (
         "JWT_SECRET_KEY, SESSION_SECRET_KEY, and PRIVACY_CONTACT_EMAIL are required in production."
     )
 
-_enc_env = os.getenv("ENCRYPTION_KEY", "")
-if _enc_env:
-    _raw = base64.b64decode(_enc_env + "==")
-    ENCRYPTION_KEY = (_raw + b"\x00" * 32)[:32]
-else:
-    ENCRYPTION_KEY = secrets.token_bytes(32)
+_KEY_HELP = (
+    "Generate one with: "
+    'python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"'
+)
 
-if IS_PRODUCTION and not _enc_env:
-    raise RuntimeError("ENCRYPTION_KEY is required in production.")
+
+def _load_encryption_key(encoded: str) -> bytes:
+    """Decode and validate a base64 AES-256 key.
+
+    Never pad and never truncate. Zero-padding a short key produces something
+    that looks like a 256-bit key but carries only the entropy that was typed,
+    and every failure mode is silent — the app happily writes ciphertext you
+    cannot distinguish from correctly encrypted data.
+    """
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError(f"ENCRYPTION_KEY is not valid base64. {_KEY_HELP}") from exc
+    if len(raw) != 32:
+        raise RuntimeError(
+            f"ENCRYPTION_KEY must decode to exactly 32 bytes, got {len(raw)}. {_KEY_HELP}"
+        )
+    return raw
+
+
+def _derive_phone_hmac_key(root: bytes) -> bytes:
+    """A distinct key for the phone lookup index, derived from the master key."""
+    explicit = os.getenv("PHONE_HMAC_KEY", "").strip()
+    if explicit:
+        return _load_encryption_key(explicit)
+    return hashlib.sha256(b"mobillity-phone-lookup-v1" + root).digest()
+
+
+_enc_env = os.getenv("ENCRYPTION_KEY", "").strip()
+if _enc_env:
+    ENCRYPTION_KEY = _load_encryption_key(_enc_env)
+elif IS_PRODUCTION:
+    raise RuntimeError(f"ENCRYPTION_KEY is required in production. {_KEY_HELP}")
+else:
+    # Persist the development key so that data written before a restart is still
+    # readable after it. A per-boot random key makes the workflow features
+    # effectively untestable locally.
+    _dev_key_path = os.path.join(BASE_DIR, ".dev-encryption-key")
+    if os.path.exists(_dev_key_path):
+        with open(_dev_key_path, encoding="utf-8") as handle:
+            ENCRYPTION_KEY = _load_encryption_key(handle.read().strip())
+    else:
+        ENCRYPTION_KEY = secrets.token_bytes(32)
+        with open(_dev_key_path, "w", encoding="utf-8") as handle:
+            handle.write(base64.b64encode(ENCRYPTION_KEY).decode())
+        logger.warning(
+            "ENCRYPTION_KEY not set. Generated a development key at %s. "
+            "Set ENCRYPTION_KEY explicitly before deploying.",
+            _dev_key_path,
+        )
+
+PHONE_HMAC_KEY = _derive_phone_hmac_key(ENCRYPTION_KEY)
 
 # ── USER STORE ────────────────────────────────────────────────────────────────
 # Production uses PostgreSQL when DATABASE_URL is configured. SQLite remains
@@ -84,17 +150,54 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USING_POSTGRES = bool(DATABASE_URL)
 DATABASE_FILE = os.getenv("DATABASE_FILE", os.path.join(BASE_DIR, "users.db"))
 
+# A fresh connect() per use costs a TCP handshake, a TLS negotiation, and an auth
+# round trip — roughly 30-50ms before any query runs, on every authenticated
+# request. The pool is created lazily so importing this module stays cheap.
+_POOL = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                from psycopg_pool import ConnectionPool
+
+                _POOL = ConnectionPool(
+                    DATABASE_URL,
+                    min_size=int(os.getenv("DB_POOL_MIN", "2")),
+                    max_size=int(os.getenv("DB_POOL_MAX", "10")),
+                    kwargs={"row_factory": dict_row},
+                    open=True,
+                )
+    return _POOL
+
+
+def _close_pool() -> None:
+    global _POOL
+    if _POOL is not None:
+        _POOL.close()
+        _POOL = None
+
+
 class _Database:
     def __enter__(self):
         if USING_POSTGRES:
-            self.connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+            self._pooled = _pool().connection()
+            self.connection = self._pooled.__enter__()
         else:
+            self._pooled = None
             self.connection = sqlite3.connect(DATABASE_FILE)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys = ON")
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        if self._pooled is not None:
+            # psycopg's pooled context manager commits on success, rolls back on
+            # error, and returns the connection to the pool.
+            return self._pooled.__exit__(exc_type, exc_value, traceback)
         try:
             if exc_type is None:
                 self.connection.commit()
@@ -166,6 +269,7 @@ def _init_db() -> None:
                 phone_encrypted TEXT,
                 email_encrypted TEXT,
                 timezone TEXT NOT NULL DEFAULT 'America/New_York',
+                phone_hmac TEXT,
                 sms_consent INTEGER NOT NULL DEFAULT 0,
                 voice_consent INTEGER NOT NULL DEFAULT 0,
                 email_consent INTEGER NOT NULL DEFAULT 0,
@@ -173,6 +277,16 @@ def _init_db() -> None:
                 FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
+        # Phone numbers are encrypted with a per-row nonce, so they cannot be
+        # looked up by ciphertext. A deterministic HMAC gives inbound webhooks a
+        # way to find the patient without storing the number in plaintext.
+        if USING_POSTGRES:
+            db.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS phone_hmac TEXT")
+        else:
+            patient_columns = {row["name"] for row in db.execute("PRAGMA table_info(patients)")}
+            if "phone_hmac" not in patient_columns:
+                db.execute("ALTER TABLE patients ADD COLUMN phone_hmac TEXT")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_patients_phone_hmac ON patients(phone_hmac)")
         db.execute(f"""
             CREATE TABLE IF NOT EXISTS appointments (
                 id {id_definition},
@@ -226,18 +340,42 @@ def _init_db() -> None:
         db.execute(f"""
             CREATE TABLE IF NOT EXISTS call_handoffs (
                 id {id_definition},
+                owner_user_id BIGINT,
                 caller_phone_encrypted TEXT,
                 reason TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'queued'
                     CHECK (status IN ('queued', 'transferred', 'resolved')),
                 created_at TEXT NOT NULL,
-                resolved_at TEXT
+                resolved_at TEXT,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE SET NULL
             )
         """)
+        # Maps an inbound Twilio number to the practice that owns it, so calls
+        # can be attributed to a tenant and surfaced in that tenant's queue.
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS practice_phone_numbers (
+                id {id_definition},
+                owner_user_id BIGINT NOT NULL,
+                phone_number TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        if USING_POSTGRES:
+            db.execute("ALTER TABLE call_handoffs ADD COLUMN IF NOT EXISTS owner_user_id BIGINT")
+        else:
+            handoff_columns = {row["name"] for row in db.execute("PRAGMA table_info(call_handoffs)")}
+            if "owner_user_id" not in handoff_columns:
+                db.execute("ALTER TABLE call_handoffs ADD COLUMN owner_user_id BIGINT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_appointments_owner_start ON appointments(owner_user_id, starts_at)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_reminder_jobs_due ON reminder_jobs(status, scheduled_for)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_analytics_occurred ON analytics_events(occurred_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_events_owner_time ON communication_events(owner_user_id, created_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_handoffs_owner_status ON call_handoffs(owner_user_id, status)")
 
-_init_db()
+# Schema creation happens in the lifespan handler, not at import time, so that
+# importing this module has no side effects.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token", auto_error=False)
 
 # ── RATE LIMITER ─────────────────────────────────────────────────────────────
@@ -267,6 +405,57 @@ app.add_middleware(
 )
 
 # ── HIPAA SECURITY HEADERS ────────────────────────────────────────────────────
+def _content_security_policy() -> str:
+    """Build the CSP, tightening script-src once the legacy pages are retired.
+
+    The Astro build emits no inline <script>, and /admin's script now lives in
+    /static/admin.js, so once FRONTEND_BASE_URL is set nothing this process
+    serves needs 'unsafe-inline' for scripts — an injected handler cannot
+    execute at all. Until then the legacy HTML files still carry inline scripts
+    and would break under the strict policy.
+
+    style-src keeps 'unsafe-inline' either way. Inline CSS is a far weaker
+    vector than inline JS, and connect-src 'self' independently blocks the
+    exfiltration path that makes an injection worth attempting.
+    """
+    script_src = "script-src 'self'" if FRONTEND_BASE_URL else "script-src 'self' 'unsafe-inline'"
+    return "; ".join(
+        (
+            "default-src 'self'",
+            script_src,
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "form-action 'self'",
+        )
+    )
+
+# Paths that may carry patient data or credentials must never be stored by any
+# cache. Everything else gets a policy appropriate to its content.
+NO_STORE_PREFIXES = ("/api/", "/auth/", "/webhooks/")
+
+
+@app.middleware("http")
+async def add_request_context(request: Request, call_next):
+    """Bind a correlation id to every request and return it to the client.
+
+    Pairs with the extraction error reference, so a user can quote one value and
+    have it match a log line.
+    """
+    incoming = request.headers.get("X-Request-ID", "")
+    request_id = incoming[:64] if incoming else secrets.token_hex(8)
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -274,26 +463,90 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = _content_security_policy()
+
+    path = request.url.path
+    if path.startswith(NO_STORE_PREFIXES):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        response.headers["Vary"] = "Cookie"
+    elif path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=3600"
+    else:
+        # HTML shells hold no patient data — it arrives over fetch — so they may
+        # be revalidated rather than re-downloaded.
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 # ── AES-256-GCM UTILITIES ─────────────────────────────────────────────────────
+# Ciphertext is tagged with the key version that produced it, so a compromised
+# key can be retired without taking the application offline to re-encrypt every
+# row at once. Values written before versioning carry no prefix and are read
+# with the legacy key.
+#
+# Format: "v<n>:<base64(nonce || ciphertext)>"
+# The base64 alphabet contains no colon, so the separator unambiguously
+# distinguishes a versioned value from a legacy one.
+_VERSION_SEPARATOR = ":"
+
+
+def _load_key_ring() -> tuple[dict[int, bytes], int]:
+    """Collect every key the application can decrypt with, and the write key.
+
+    ENCRYPTION_KEY is version 1. Additional versions come from
+    ENCRYPTION_KEY_V2, ENCRYPTION_KEY_V3, and so on; ENCRYPTION_KEY_CURRENT
+    selects which one new writes use.
+    """
+    ring = {1: ENCRYPTION_KEY}
+    for version in range(2, 10):
+        encoded = os.getenv(f"ENCRYPTION_KEY_V{version}", "").strip()
+        if encoded:
+            ring[version] = _load_encryption_key(encoded)
+    current = int(os.getenv("ENCRYPTION_KEY_CURRENT", max(ring)))
+    if current not in ring:
+        raise RuntimeError(
+            f"ENCRYPTION_KEY_CURRENT={current} has no matching key. Available: {sorted(ring)}"
+        )
+    return ring, current
+
+
+KEY_RING, CURRENT_KEY_VERSION = _load_key_ring()
+
+
 def aes_encrypt(plaintext: str) -> str:
-    aesgcm = AESGCM(ENCRYPTION_KEY)
     nonce = secrets.token_bytes(12)
-    ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-    return base64.b64encode(nonce + ct).decode()
+    ct = AESGCM(KEY_RING[CURRENT_KEY_VERSION]).encrypt(nonce, plaintext.encode(), None)
+    body = base64.b64encode(nonce + ct).decode()
+    return f"v{CURRENT_KEY_VERSION}{_VERSION_SEPARATOR}{body}"
+
 
 def aes_decrypt(token: str) -> str:
-    raw = base64.b64decode(token)
+    version, _, body = token.partition(_VERSION_SEPARATOR)
+    if body and version.startswith("v") and version[1:].isdigit():
+        key = KEY_RING.get(int(version[1:]))
+        if key is None:
+            raise InvalidTag(f"No key available for {version}")
+    else:
+        # Written before key versioning existed.
+        key, body = KEY_RING[1], token
+    raw = base64.b64decode(body)
     nonce, ct = raw[:12], raw[12:]
-    return AESGCM(ENCRYPTION_KEY).decrypt(nonce, ct, None).decode()
+    return AESGCM(key).decrypt(nonce, ct, None).decode()
+
+
+def aes_needs_rotation(token: str | None) -> bool:
+    """True when a stored value was written under a superseded key."""
+    if not token:
+        return False
+    version, _, body = token.partition(_VERSION_SEPARATOR)
+    if not (body and version.startswith("v") and version[1:].isdigit()):
+        return True
+    return int(version[1:]) != CURRENT_KEY_VERSION
 
 # ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"not-a-real-password", bcrypt.gensalt()).decode()
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
@@ -308,9 +561,9 @@ def _authenticate_user(email: str, password: str):
     valid = bcrypt.checkpw(password.encode(), password_hash.encode())
     return user if user and valid else None
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
+    expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=15))
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -345,7 +598,7 @@ def _require_csrf(request: Request) -> None:
     if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
         raise HTTPException(status_code=403, detail="Invalid CSRF token.")
 
-async def get_current_user(request: Request, token: Optional[str] = Depends(oauth2_scheme)):
+def get_current_user(request: Request, token: str | None = Depends(oauth2_scheme)):
     exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
@@ -362,15 +615,15 @@ async def get_current_user(request: Request, token: Optional[str] = Depends(oaut
         if not user or payload.get("sv") != user["session_version"]:
             raise exc
         return user
-    except JWTError:
-        raise exc
-    except (TypeError, ValueError):
-        raise exc
+    except JWTError as error:
+        raise exc from error
+    except (TypeError, ValueError) as error:
+        raise exc from error
 
 def _is_admin(user) -> bool:
     return _normalize_email(user["email"]) in ADMIN_EMAILS
 
-async def get_admin_user(current_user=Depends(get_current_user)):
+def get_admin_user(current_user=Depends(get_current_user)):
     if not _is_admin(current_user):
         raise HTTPException(status_code=403, detail="Administrator access required.")
     return current_user
@@ -380,16 +633,19 @@ def _purge_expired_analytics(db: _Database) -> None:
     db.execute("DELETE FROM analytics_events WHERE occurred_at < ?", (cutoff,))
 
 def _record_event(user_id: int, event_name: str, page: str = "app") -> None:
+    """Record one allowlisted event.
+
+    Retention purging deliberately does not happen here. Running a full-table
+    DELETE scan on every page view is expensive and pointless — the scheduler
+    purges hourly, and the admin dashboard purges before it reads.
+    """
     with _db() as db:
-        enabled = db.execute(
-            "SELECT analytics_enabled FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if not enabled or not enabled["analytics_enabled"]:
-            return
-        _purge_expired_analytics(db)
         db.execute(
-            "INSERT INTO analytics_events(user_id, event_name, page, occurred_at) VALUES (?, ?, ?, ?)",
-            (user_id, event_name, page, _utcnow().isoformat()),
+            """INSERT INTO analytics_events(user_id, event_name, page, occurred_at)
+               SELECT ?, ?, ?, ? WHERE EXISTS (
+                   SELECT 1 FROM users WHERE id = ? AND analytics_enabled = 1
+               )""",
+            (user_id, event_name, page, _utcnow().isoformat(), user_id),
         )
 
 def _create_action_token(user_id: int, purpose: str) -> str:
@@ -503,7 +759,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ── CONFIDENCE THRESHOLD ──────────────────────────────────────────────────────
 # Codes below this threshold are moved to suggested_codes at parse time.
 # Raise this value to increase precision; lower it to increase recall.
-CONFIRMED_CONFIDENCE_THRESHOLD = 0.75
+# Measured, not guessed: tests/benchmark.py sweeps this. Against the 100-case
+# set the curve is flat from 0.50 to 0.90 and steps hard at 0.95 -- precision
+# 0.781 -> 0.941 for a recall cost of 0.904 -> 0.877. That trades 4 true
+# positives for 29 false ones, which is the right direction for billing.
+# Re-measure after any prompt change: tightening the prompt moved this step
+# up from 0.90, so the operating point is a property of the prompt, not a
+# constant.
+CONFIRMED_CONFIDENCE_THRESHOLD = 0.95
 
 # ── PHYSICIAN BILLING PROMPT ──────────────────────────────────────────────────
 # NOTE: Uses a two-pass chain-of-thought style:
@@ -516,8 +779,14 @@ SYSTEM_PROMPT = """You are a board-certified professional medical coder and phys
 PRECISION RULES — follow these exactly to achieve ≥90% coding accuracy:
 1. Only assign a code when there is EXPLICIT, UNAMBIGUOUS documentation supporting it. When in doubt, move it to suggested_codes.
 2. For ICD-10-CM: always code to the highest specificity — include 7th character, laterality, episode of care, and severity where required. A truncated code (e.g., S52 without full extension) is WRONG.
-3. For CPT: verify that the procedure is fully documented (operative note, procedure note, or attending attestation). Do not infer a procedure from a diagnosis alone.
-4. For HCPCS Level II: assign codes for durable medical equipment (DME), orthotics/prosthetics, ambulance services, drugs administered in the office (J-codes), supplies (A-codes), and other non-physician services. Only assign when the item/service is explicitly documented as provided or ordered.
+3. For CPT: verify that the procedure is fully documented (operative note, procedure note, or attending attestation). Do not infer a procedure from a diagnosis alone. This restriction is about procedures, NOT about the visit itself:
+   - Nearly every outpatient encounter carries an evaluation and management code. Do not omit it. When total time is documented, select by time: established patient 99212 (10-19 min), 99213 (20-29), 99214 (30-39), 99215 (40-54); new patient 99202 (15-29), 99203 (30-44), 99204 (45-59), 99205 (60-74). Preventive visits use the age-banded 993xx/994xx series.
+   - When a drug or vaccine is administered, code BOTH the product AND its administration (for example 96372 for a therapeutic injection, 90471 for the first vaccine administered).
+   - Match documented size, count, or extent to the correct code in a banded family: a 3.5 cm simple repair is 12002, not 12001.
+4. For HCPCS Level II: assign a code when, and only when, the note states the item was dispensed, administered, or ordered AT THIS ENCOUNTER. When the note does say so, do not omit it — a dispensed brace, splint, monitor, or concentrator is billable. Then:
+   - J-codes are for drugs given by INJECTION OR INFUSION only. NEVER assign a J-code for an oral, topical, inhaled, or nebulized medication, and never for a prescription the patient will fill at a pharmacy.
+   - NEVER assign a DME or orthotic code for equipment the patient already owns or is already using. "Compliant with CPAP" and "on an insulin pump" are history, not a supply being billed today.
+   - Match the documented dose or size exactly. Drug J-codes are dose-banded and the wrong band is the wrong code.
 5. NEVER code "possible," "probable," "suspected," "rule out," or "likely" conditions as confirmed diagnoses.
 6. Apply correct sequencing: principal/primary diagnosis first, then complications, then comorbidities.
 7. Set confidence as a strict self-assessment:
@@ -526,7 +795,9 @@ PRECISION RULES — follow these exactly to achieve ≥90% coding accuracy:
    - <0.75: Too uncertain — place in suggested_codes instead.
 8. Never hallucinate codes. If you are uncertain of the exact code, use suggested_codes with documentation_needed.
 
-HCPCS LEVEL II EXAMPLES (use these as anchors):
+HCPCS LEVEL II FORMAT REFERENCE — these show what a HCPCS code looks like.
+They are NOT a menu and NOT suggestions. Never emit one of these codes
+unless the note documents that exact item at this encounter:
 - E0601 — Continuous positive airway pressure (CPAP) device
 - L3000 — Foot insert, removable, molded to patient model
 - J0696 — Injection, ceftriaxone sodium, per 250mg
@@ -537,7 +808,7 @@ HCPCS LEVEL II EXAMPLES (use these as anchors):
 You MUST respond ONLY with valid JSON — no markdown fences, no prose, no explanation outside the JSON object.
 """
 
-PROMPT_TEMPLATE = """Extract all billable medical codes from the clinical note below. Include ICD-10-CM diagnosis codes, CPT procedure codes, AND HCPCS Level II codes (DME, supplies, drugs, orthotics, ambulance, vaccines, etc.).
+PROMPT_TEMPLATE = """Extract all billable medical codes from the clinical note below: ICD-10-CM diagnosis codes, CPT procedure codes, and HCPCS Level II codes where an item was actually dispensed or administered.
 
 Return this exact JSON structure:
 {
@@ -567,59 +838,160 @@ Return this exact JSON structure:
 Rules:
 - confirmed_codes: only codes with confidence ≥ 0.75 and strong/moderate documentation.
 - suggested_codes: codes that clinically likely apply but need more documentation, OR any code where confidence < 0.75.
-- Do NOT omit HCPCS codes for any DME, supply, injectable drug, or non-physician service documented in the note.
-- If no HCPCS codes apply, return an empty array for that section — do not fabricate codes.
+- Include a HCPCS code for every item dispensed, administered, or ordered at this encounter, and for nothing else. Many notes have none; a note that dispenses equipment has one.
+- Every ICD-10-CM code must be a complete billable code. Codes that have been subdivided are not billable at the parent level: M54.5, N18.3, and similar stems require further characters. If you are unsure a code is complete, it is not.
+- Do not fabricate codes to fill a section. An empty array is a valid answer.
 
 Clinical Note:
 """
 
 # ── RESPONSE PARSING ──────────────────────────────────────────────────────────
+# ── ICD-10-CM CODE VALIDATION ────────────────────────────────────────────────
+# The 2025 CMS billable-code list (public domain), shipped compressed. The model
+# reliably emits parent stems that were subdivided in recent updates -- M54.5 and
+# N18.3 both stopped being billable in FY2022 -- and a payer rejects those
+# outright, which is worse than a merely debatable code.
+#
+# Scope note: this only helps ICD-10-CM. The model's invented HCPCS codes
+# (J8499 for an oral statin, J0456 for oral azithromycin) are all VALID codes
+# used in the wrong place, so no code list can catch them; only the prompt rules
+# above address that.
+
+ICD10_CODES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "data", "icd10cm_2025_codes.txt.gz")
+_ICD10_CODES: set[str] | None = None
+
+
+def _icd10_codes() -> set[str]:
+    """Load the billable-code set once, on first use."""
+    global _ICD10_CODES
+    if _ICD10_CODES is None:
+        try:
+            with gzip.open(ICD10_CODES_FILE, "rt", encoding="ascii") as handle:
+                _ICD10_CODES = {line.strip() for line in handle if line.strip()}
+        except OSError:
+            # Validation is an improvement, not a dependency. Without the file
+            # every code passes through, which is the old behaviour.
+            logger.warning("ICD-10 code list unavailable at %s; skipping validation",
+                           ICD10_CODES_FILE)
+            _ICD10_CODES = set()
+    return _ICD10_CODES
+
+
+def icd10_is_billable(code: str) -> bool:
+    """True when the code is a complete billable ICD-10-CM code.
+
+    Returns True when the list could not be loaded, so a missing data file
+    degrades to the previous permissive behaviour rather than rejecting
+    everything.
+    """
+    codes = _icd10_codes()
+    if not codes:
+        return True
+    return str(code).strip().upper().replace(".", "").replace(" ", "") in codes
+
+
+def _reject_unbillable_codes(data: dict) -> dict:
+    """Demote confirmed ICD-10-CM codes that are not billable as written.
+
+    Demoted rather than deleted: the code is usually the right family with a
+    missing character, so a coder wants to see it and add the specificity.
+    """
+    kept, demoted = [], []
+    for item in data.get("confirmed_codes") or []:
+        if not isinstance(item, dict):
+            continue
+        system = str(item.get("code_type", "")).strip().upper()
+        if system.startswith("ICD-10-CM") and not icd10_is_billable(item.get("code", "")):
+            demoted.append({
+                "code_type": item.get("code_type", ""),
+                "code": item.get("code", ""),
+                "description": item.get("description", ""),
+                "reason_suggested": (
+                    "Not a billable ICD-10-CM code as written — this stem was "
+                    "subdivided and requires further characters."
+                ),
+                "documentation_needed": (
+                    "Document the detail needed to select a complete code "
+                    "(laterality, severity, episode, or site)."
+                ),
+            })
+        else:
+            kept.append(item)
+
+    if demoted:
+        logger.info("rejected %d non-billable ICD-10-CM code(s)", len(demoted))
+    data["confirmed_codes"] = kept
+    data["suggested_codes"] = (data.get("suggested_codes") or []) + demoted
+    return data
+
+
+def _apply_confidence_threshold(data: dict) -> dict:
+    """Move under-confident confirmed codes into suggestions.
+
+    A false confirmed code is far more costly than a missed suggestion, so the
+    threshold biases toward precision.
+    """
+    confirmed = []
+    downgraded = []
+
+    for item in data.get("confirmed_codes") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            item["confidence"] = round(float(item.get("confidence", 0)), 2)
+        except (TypeError, ValueError):
+            item["confidence"] = 0.0
+
+        if item["confidence"] < CONFIRMED_CONFIDENCE_THRESHOLD:
+            downgraded.append({
+                "code_type": item.get("code_type", ""),
+                "code": item.get("code", ""),
+                "description": item.get("description", ""),
+                "reason_suggested": (
+                    f"Confidence {item['confidence']} below threshold — "
+                    f"{item.get('reasoning', '')}"
+                ),
+                "documentation_needed": "Strengthen documentation to support billing.",
+            })
+        else:
+            confirmed.append(item)
+
+    data["confirmed_codes"] = confirmed
+    data["suggested_codes"] = (data.get("suggested_codes") or []) + downgraded
+    return _reject_unbillable_codes(data)
+
+
 def _parse_llm_response(text: str) -> dict:
     cleaned = re.sub(r"```json|```", "", text).strip()
 
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = cleaned[start:end + 1]
-    else:
-        s, e = cleaned.find("["), cleaned.rfind("]")
-        if s != -1 and e != -1:
-            try:
-                arr = json.loads(cleaned[s:e + 1])
-                return {"confirmed_codes": arr, "suggested_codes": []}
-            except Exception:
-                pass
+    object_start, object_end = cleaned.find("{"), cleaned.rfind("}")
+    array_start, array_end = cleaned.find("["), cleaned.rfind("]")
+
+    # An array of code objects also contains braces, so the object branch would
+    # otherwise always win and extract a single inner object — silently dropping
+    # every code. Whichever delimiter appears first determines the shape.
+    prefer_array = array_start != -1 and (object_start == -1 or array_start < object_start)
+    if prefer_array and array_end > array_start:
+        try:
+            items = json.loads(cleaned[array_start:array_end + 1])
+            if isinstance(items, list):
+                return _apply_confidence_threshold(
+                    {"confirmed_codes": items, "suggested_codes": []}
+                )
+        except (ValueError, TypeError):
+            pass
+
+    if object_start == -1 or object_end == -1 or object_end <= object_start:
         return {"confirmed_codes": [], "suggested_codes": [], "raw": cleaned}
+    candidate = cleaned[object_start:object_end + 1]
 
     try:
         data = json.loads(candidate)
-
-        confirmed = []
-        downgraded = []
-
-        for item in data.get("confirmed_codes", []):
-            try:
-                item["confidence"] = round(float(item.get("confidence", 0)), 2)
-            except Exception:
-                item["confidence"] = 0.0
-
-            # Enforce threshold: low-confidence confirmed codes move to suggested
-            if item["confidence"] < CONFIRMED_CONFIDENCE_THRESHOLD:
-                downgraded.append({
-                    "code_type": item.get("code_type", ""),
-                    "code": item.get("code", ""),
-                    "description": item.get("description", ""),
-                    "reason_suggested": f"Confidence {item['confidence']} below threshold — {item.get('reasoning', '')}",
-                    "documentation_needed": "Strengthen documentation to support billing.",
-                })
-            else:
-                confirmed.append(item)
-
-        data["confirmed_codes"] = confirmed
-        data["suggested_codes"] = data.get("suggested_codes", []) + downgraded
-
-        return data
-
-    except Exception:
+        if not isinstance(data, dict):
+            return {"confirmed_codes": [], "suggested_codes": [], "raw": cleaned}
+        return _apply_confidence_threshold(data)
+    except (ValueError, TypeError):
         return {"confirmed_codes": [], "suggested_codes": [], "raw": cleaned}
 
 
@@ -646,7 +1018,16 @@ def extract_medical_codes(note: str) -> dict:
 
 
 # ── CLINICAL WORKFLOW AUTOMATION ─────────────────────────────────────────────
-REMINDER_LEAD_TIME = timedelta(days=7)
+REMINDER_LEAD_TIME = timedelta(days=int(os.getenv("REMINDER_LEAD_DAYS", "7")))
+# Used when a visit is booked inside the normal lead window.
+SHORT_NOTICE_LEAD_TIME = timedelta(hours=int(os.getenv("REMINDER_SHORT_NOTICE_HOURS", "24")))
+# Below this, a reminder has no useful purpose.
+MINIMUM_REMINDER_NOTICE = timedelta(hours=int(os.getenv("REMINDER_MINIMUM_NOTICE_HOURS", "2")))
+# TCPA calling window, in the patient's local time.
+QUIET_HOURS_END = 8
+QUIET_HOURS_START = 21
+DEFAULT_TIMEZONE = os.getenv("DEFAULT_PATIENT_TIMEZONE", "America/New_York")
+KNOWN_TIMEZONES = available_timezones()
 FRONT_DESK_KEYWORDS = {
     "bill", "billing", "insurance", "refund", "payment", "medical record",
     "records", "referral", "prior authorization", "complaint", "manager",
@@ -654,26 +1035,64 @@ FRONT_DESK_KEYWORDS = {
 }
 
 
-def _encrypt_optional(value: Optional[str]) -> Optional[str]:
+UNREADABLE = "[unreadable]"
+
+# Standard carrier opt-out and opt-in keywords.
+SMS_STOP_KEYWORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "revoke", "optout"}
+SMS_START_KEYWORDS = {"start", "unstop", "yes", "optin"}
+
+
+def _normalize_phone(value: str) -> str:
+    """Reduce a phone number to digits and a leading + for stable hashing."""
+    cleaned = re.sub(r"[^\d+]", "", value or "")
+    return cleaned
+
+
+def phone_fingerprint(value: str) -> str | None:
+    """Deterministic HMAC of a phone number, for lookup without plaintext.
+
+    Keyed separately from the encryption key so that a lookup index leak does not
+    also compromise stored ciphertext.
+    """
+    normalized = _normalize_phone(value)
+    if not normalized:
+        return None
+    return hmac.new(PHONE_HMAC_KEY, normalized.encode(), hashlib.sha256).hexdigest()
+
+
+def _encrypt_optional(value: str | None) -> str | None:
     cleaned = (value or "").strip()
     return aes_encrypt(cleaned) if cleaned else None
 
 
-def _decrypt_optional(value: Optional[str]) -> str:
-    return aes_decrypt(value) if value else ""
+def _decrypt_optional(value: str | None) -> str:
+    """Decrypt a nullable column, degrading to a sentinel rather than raising.
+
+    The overview endpoint decrypts every patient across four result sets, so one
+    unreadable row would otherwise take down the whole page and hide the ninety-
+    nine records that are fine.
+    """
+    if not value:
+        return ""
+    try:
+        return aes_decrypt(value)
+    except (InvalidTag, ValueError, binascii.Error):
+        logger.error("Could not decrypt a stored value; returning a placeholder.")
+        return UNREADABLE
 
 
 def _iso_datetime(value: datetime) -> str:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
-def _appointment_row(db: sqlite3.Connection, appointment_id: int, owner_user_id: int):
+def _appointment_row(db: "_Database", appointment_id: int, owner_user_id: int):
     return db.execute(
         """SELECT appointments.*, patients.name_encrypted, patients.phone_encrypted,
                   patients.email_encrypted, patients.sms_consent,
-                  patients.voice_consent, patients.email_consent
+                  patients.voice_consent, patients.email_consent,
+                  patients.timezone AS patient_timezone
            FROM appointments JOIN patients ON patients.id = appointments.patient_id
            WHERE appointments.id = ? AND appointments.owner_user_id = ?""",
         (appointment_id, owner_user_id),
@@ -710,10 +1129,53 @@ def _appointment_json(row) -> dict:
     return result
 
 
-def _schedule_reminders(db: sqlite3.Connection, appointment) -> int:
+def _reminder_send_time(appointment) -> datetime | None:
+    """Choose when a reminder should go out, or None if it should be skipped.
+
+    Subtracting a flat seven days meant a visit booked three days out scheduled
+    its reminder four days in the past, so the dispatcher fired it within the
+    minute — the patient got a 'reminder' seconds after booking. Fall back to a
+    24-hour notice inside the lead window, and skip entirely when the visit is
+    too close for a reminder to be useful.
+    """
+    starts_at = datetime.fromisoformat(appointment["starts_at"])
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=UTC)
+    now = _utcnow()
+    if starts_at - now < MINIMUM_REMINDER_NOTICE:
+        return None
+    scheduled_for = starts_at - REMINDER_LEAD_TIME
+    if scheduled_for <= now:
+        scheduled_for = starts_at - SHORT_NOTICE_LEAD_TIME
+    # Never schedule in the past: a same-day booking must not trigger an
+    # immediate phone call.
+    return max(scheduled_for, now + timedelta(minutes=5))
+
+
+def _within_quiet_hours(moment: datetime, appointment) -> bool:
+    """TCPA restricts calls and texts to 8am-9pm in the recipient's local time."""
+    local_hour = moment.astimezone(_appointment_timezone(appointment)).hour
+    return local_hour < QUIET_HOURS_END or local_hour >= QUIET_HOURS_START
+
+
+def _shift_out_of_quiet_hours(moment: datetime, appointment) -> datetime:
+    zone = _appointment_timezone(appointment)
+    local = moment.astimezone(zone)
+    if local.hour < QUIET_HOURS_END:
+        local = local.replace(hour=QUIET_HOURS_END, minute=0, second=0, microsecond=0)
+    elif local.hour >= QUIET_HOURS_START:
+        local = (local + timedelta(days=1)).replace(
+            hour=QUIET_HOURS_END, minute=0, second=0, microsecond=0
+        )
+    return local.astimezone(UTC)
+
+
+def _schedule_reminders(db: "_Database", appointment) -> int:
     if appointment["status"] != "scheduled":
         return 0
-    scheduled_for = datetime.fromisoformat(appointment["starts_at"]) - REMINDER_LEAD_TIME
+    scheduled_for = _reminder_send_time(appointment)
+    if scheduled_for is None:
+        return 0
     consent = {
         "sms": bool(appointment["sms_consent"]) and bool(appointment["phone_encrypted"]),
         "voice": bool(appointment["voice_consent"]) and bool(appointment["phone_encrypted"]),
@@ -721,34 +1183,66 @@ def _schedule_reminders(db: sqlite3.Connection, appointment) -> int:
     }
     created = 0
     for channel, allowed in consent.items():
-        if allowed:
-            insert_clause = "INSERT" if USING_POSTGRES else "INSERT OR IGNORE"
-            conflict_clause = " ON CONFLICT (appointment_id, channel) DO NOTHING" if USING_POSTGRES else ""
-            cursor = db.execute(
-                f"""{insert_clause} INTO reminder_jobs
-                   (owner_user_id, appointment_id, channel, scheduled_for, created_at)
-                   VALUES (?, ?, ?, ?, ?){conflict_clause}""",
-                (
-                    appointment["owner_user_id"],
-                    appointment["id"],
-                    channel,
-                    _iso_datetime(scheduled_for),
-                    _utcnow().isoformat(),
-                ),
-            )
-            created += cursor.rowcount
+        if not allowed:
+            continue
+        channel_time = scheduled_for
+        # Email may arrive overnight; a phone ringing at 3am may not.
+        if channel in ("sms", "voice") and _within_quiet_hours(channel_time, appointment):
+            channel_time = _shift_out_of_quiet_hours(channel_time, appointment)
+        cursor = db.execute(
+            """INSERT INTO reminder_jobs
+               (owner_user_id, appointment_id, channel, scheduled_for, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (appointment_id, channel) DO NOTHING""",
+            (
+                appointment["owner_user_id"],
+                appointment["id"],
+                channel,
+                _iso_datetime(channel_time),
+                _utcnow().isoformat(),
+            ),
+        )
+        created += cursor.rowcount
     return created
+
+
+def _appointment_timezone(appointment) -> ZoneInfo:
+    """Resolve a patient's timezone, falling back to the practice default."""
+    keys = appointment.keys() if hasattr(appointment, "keys") else ()
+    name = (appointment["patient_timezone"] if "patient_timezone" in keys else "") or ""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        if name:
+            logger.warning("Unknown patient timezone %r; falling back to %s", name, DEFAULT_TIMEZONE)
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def _format_when(moment: datetime) -> str:
+    """Format a local datetime without glibc-only strftime extensions.
+
+    '%-d' and '%-I' raise ValueError on Windows, which previously made every
+    reminder fail on a non-Linux host.
+    """
+    hour = moment.hour % 12 or 12
+    meridiem = "AM" if moment.hour < 12 else "PM"
+    zone = moment.strftime("%Z") or "local time"
+    return f"{moment:%A, %B} {moment.day} at {hour}:{moment.minute:02d} {meridiem} {zone}"
 
 
 def _reminder_copy(appointment, channel: str) -> tuple[str, str]:
     patient_name = _decrypt_optional(appointment["name_encrypted"])
     first_name = patient_name.split()[0] if patient_name else "there"
-    starts = datetime.fromisoformat(appointment["starts_at"]).astimezone(timezone.utc)
-    when = starts.strftime("%A, %B %-d at %-I:%M %p UTC")
+    # Patients read their own local time. Sending UTC is worse than sending
+    # nothing, because a patient who trusts it arrives at the wrong hour.
+    starts = datetime.fromisoformat(appointment["starts_at"]).astimezone(
+        _appointment_timezone(appointment)
+    )
+    when = _format_when(starts)
     practice = os.getenv("PRACTICE_NAME", "your care team")
     location = f" at {appointment['location']}" if appointment["location"] else ""
     if channel == "email":
-        subject = f"Appointment reminder for {starts.strftime('%B %-d')}"
+        subject = f"Appointment reminder for {starts:%B} {starts.day}"
         body = (
             f"Hello {first_name},\n\nThis is a reminder from {practice} that you have "
             f"an appointment on {when}{location}.\n\n"
@@ -802,121 +1296,277 @@ def _deliver_reminder(appointment, channel: str) -> str:
     return result.get("sid", "")
 
 
-def dispatch_due_reminders(now: Optional[datetime] = None, limit: int = 50) -> dict:
-    now = now or _utcnow()
-    sent = failed = 0
+MAX_REMINDER_ATTEMPTS = 3
+STUCK_JOB_TIMEOUT = timedelta(minutes=15)
+
+
+def _requeue_stuck_jobs(db: _Database, now: datetime) -> int:
+    """Recover jobs claimed by a process that died before recording an outcome.
+
+    Without this, a crash between claim and record strands a job in 'processing'
+    forever. Jobs that have exhausted their attempts are failed rather than
+    retried, so a permanently broken recipient cannot loop.
+    """
+    cutoff = _iso_datetime(now - STUCK_JOB_TIMEOUT)
+    db.execute(
+        """UPDATE reminder_jobs SET status = 'failed', last_error = ?
+           WHERE status = 'processing' AND created_at < ? AND attempts >= ?""",
+        (f"Abandoned after {MAX_REMINDER_ATTEMPTS} attempts", cutoff, MAX_REMINDER_ATTEMPTS),
+    )
+    return db.execute(
+        """UPDATE reminder_jobs SET status = 'pending'
+           WHERE status = 'processing' AND created_at < ? AND attempts < ?""",
+        (cutoff, MAX_REMINDER_ATTEMPTS),
+    ).rowcount
+
+
+def _claim_due_reminders(now: datetime, limit: int, owner_user_id: int | None) -> list:
+    """Phase one: atomically claim due jobs and commit before any network call.
+
+    The commit is what makes the claim visible to other workers. Holding it open
+    across provider calls would both serialise the dispatchers and roll back
+    delivery records if the process died mid-batch.
+    """
+    claimed: list = []
     with _db() as db:
+        _requeue_stuck_jobs(db, now)
+        # A NULL owner_user_id parameter means "all tenants", expressed in SQL so
+        # that no part of the statement is built by string concatenation.
         jobs = db.execute(
             """SELECT * FROM reminder_jobs
                WHERE status = 'pending' AND scheduled_for <= ?
+                 AND (? IS NULL OR owner_user_id = ?)
                ORDER BY scheduled_for LIMIT ?""",
-            (_iso_datetime(now), limit),
+            (_iso_datetime(now), owner_user_id, owner_user_id, limit),
         ).fetchall()
         for job in jobs:
-            claimed = db.execute(
+            if db.execute(
                 """UPDATE reminder_jobs SET status = 'processing', attempts = attempts + 1
                    WHERE id = ? AND status = 'pending'""",
                 (job["id"],),
-            ).rowcount
-            if not claimed:
-                continue
+            ).rowcount:
+                claimed.append(dict(job))
+    return claimed
+
+
+def _record_reminder_outcome(job: dict, provider_id: str | None, error: str | None) -> None:
+    """Phase three: persist one job's terminal state in its own transaction."""
+    with _db() as db:
+        if error is not None:
+            db.execute(
+                "UPDATE reminder_jobs SET status = 'failed', last_error = ? WHERE id = ?",
+                (error[:500], job["id"]),
+            )
+            return
+        sent_at = _utcnow().isoformat()
+        db.execute(
+            "UPDATE reminder_jobs SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ?",
+            (sent_at, job["id"]),
+        )
+        db.execute(
+            """INSERT INTO communication_events
+               (owner_user_id, appointment_id, patient_id, channel, direction,
+                outcome, detail, provider_id, created_at)
+               VALUES (?, ?, ?, ?, 'outbound', 'sent', ?, ?, ?)""",
+            (
+                job["owner_user_id"], job["appointment_id"], job["patient_id"],
+                job["channel"], "Appointment reminder", provider_id, sent_at,
+            ),
+        )
+
+
+def dispatch_due_reminders(
+    now: datetime | None = None,
+    limit: int = 50,
+    owner_user_id: int | None = None,
+) -> dict:
+    """Claim, deliver, then record — each phase committing independently.
+
+    Manual dispatch passes owner_user_id so a practice only ever triggers its own
+    reminders. The background scheduler runs unscoped across all tenants.
+    """
+    now = now or _utcnow()
+    jobs = _claim_due_reminders(now, limit, owner_user_id)
+    sent = failed = cancelled = 0
+
+    for job in jobs:
+        # Re-read the appointment outside the claim transaction; it may have been
+        # cancelled between scheduling and now.
+        with _db() as db:
             appointment = _appointment_row(db, job["appointment_id"], job["owner_user_id"])
-            if not appointment or appointment["status"] not in ("scheduled", "confirmed"):
-                db.execute("UPDATE reminder_jobs SET status = 'cancelled' WHERE id = ?", (job["id"],))
-                continue
-            try:
-                provider_id = _deliver_reminder(appointment, job["channel"])
-                sent_at = _utcnow().isoformat()
+        if not appointment or appointment["status"] not in ("scheduled", "confirmed"):
+            with _db() as db:
                 db.execute(
-                    "UPDATE reminder_jobs SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ?",
-                    (sent_at, job["id"]),
+                    "UPDATE reminder_jobs SET status = 'cancelled' WHERE id = ?", (job["id"],)
                 )
-                db.execute(
-                    """INSERT INTO communication_events
-                       (owner_user_id, appointment_id, patient_id, channel, direction,
-                        outcome, detail, provider_id, created_at)
-                       VALUES (?, ?, ?, ?, 'outbound', 'sent', ?, ?, ?)""",
-                    (
-                        job["owner_user_id"], appointment["id"], appointment["patient_id"],
-                        job["channel"], "Seven-day appointment reminder",
-                        provider_id, sent_at,
-                    ),
-                )
-                sent += 1
-            except Exception as exc:
-                logger.exception("Reminder job %s failed", job["id"])
-                db.execute(
-                    "UPDATE reminder_jobs SET status = 'failed', last_error = ? WHERE id = ?",
-                    (str(exc)[:500], job["id"]),
-                )
-                failed += 1
-    return {"processed": len(jobs), "sent": sent, "failed": failed}
+            cancelled += 1
+            continue
+
+        job["patient_id"] = appointment["patient_id"]
+        try:
+            provider_id = _deliver_reminder(appointment, job["channel"])
+        except Exception as exc:
+            dispatch_logger.exception(
+                "Reminder delivery failed",
+                extra={
+                    "event": "reminder.failed", "job_id": job["id"],
+                    "appointment_id": job["appointment_id"], "channel": job["channel"],
+                    "attempts": job.get("attempts"),
+                },
+            )
+            _record_reminder_outcome(job, None, str(exc))
+            failed += 1
+            continue
+        # Delivery succeeded. Record it immediately so a crash on the next job
+        # cannot roll this one back and cause a duplicate send on restart.
+        _record_reminder_outcome(job, provider_id, None)
+        dispatch_logger.info(
+            "Reminder delivered",
+            extra={
+                "event": "reminder.sent", "job_id": job["id"],
+                "appointment_id": job["appointment_id"], "channel": job["channel"],
+                "provider_id": provider_id,
+            },
+        )
+        sent += 1
+
+    return {"processed": len(jobs), "sent": sent, "failed": failed, "cancelled": cancelled}
 
 
 # ── PAGE ROUTES ───────────────────────────────────────────────────────────────
 def _serve(filename: str) -> str:
-    with open(os.path.join(BASE_DIR, filename), "r", encoding="utf-8") as f:
+    with open(os.path.join(BASE_DIR, filename), encoding="utf-8") as f:
         return f.read()
 
 
+def _page(filename: str, path: str):
+    """Serve a legacy page, or redirect to the canonical frontend once set.
+
+    /admin deliberately does not use this: it stays server-rendered here because
+    its access check runs before the HTML is returned.
+    """
+    if FRONTEND_BASE_URL:
+        return RedirectResponse(f"{FRONTEND_BASE_URL}{path}", status_code=308)
+    return HTMLResponse(_serve(filename))
+
+
 @app.get("/", response_class=HTMLResponse)
-async def serve_landing():
-    return _serve("index.html")
+def serve_landing():
+    return _page("index.html", "/")
 
 
 @app.get("/app", response_class=HTMLResponse)
-async def serve_app():
-    return _serve("app.html")
+def serve_app():
+    return _page("app.html", "/app")
 
 @app.get("/admin", response_class=HTMLResponse)
-async def serve_admin(admin_user=Depends(get_admin_user)):
-    return _serve("admin.html")
+def serve_admin(request: Request):
+    """Browser navigation deserves a redirect or a rendered page, not a raw JSON
+    error body. The API behind this page enforces admin access independently."""
+    try:
+        # Pass token explicitly: called outside FastAPI's dependency injection,
+        # the Depends(oauth2_scheme) default would arrive as a Depends object.
+        user = get_current_user(request, token=None)
+    except HTTPException:
+        return RedirectResponse("/login?next=/admin", status_code=303)
+    if not _is_admin(user):
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'><title>Not authorised</title>"
+            "<body style=\"font-family:system-ui;padding:3rem;max-width:32rem\">"
+            "<h1>Administrator access required</h1>"
+            "<p>This account cannot view analytics. "
+            "<a href='/app'>Return to the code extractor</a>.</p>",
+            status_code=403,
+        )
+    return HTMLResponse(_serve("admin.html"))
 
 @app.get("/privacy", response_class=HTMLResponse)
-async def serve_privacy():
-    return (
+def serve_privacy():
+    if FRONTEND_BASE_URL:
+        return RedirectResponse(f"{FRONTEND_BASE_URL}/privacy", status_code=308)
+    # The built page reads these from /api/privacy-config instead.
+    return HTMLResponse(
         _serve("privacy.html")
         .replace("{{RETENTION_DAYS}}", str(ANALYTICS_RETENTION_DAYS))
         .replace("{{PRIVACY_CONTACT}}", html.escape(PRIVACY_CONTACT_EMAIL, quote=True))
     )
 
 
+@app.get("/api/privacy-config")
+def privacy_config():
+    """Retention period and privacy contact, for the statically built page.
+
+    These were previously substituted into privacy.html at serve time, which a
+    static build cannot do. Serving them from the API keeps the notice accurate
+    when the deployment's configuration changes, without a frontend rebuild —
+    which matters because both values are compliance-visible.
+    """
+    return {
+        "retention_days": ANALYTICS_RETENTION_DAYS,
+        "privacy_contact": PRIVACY_CONTACT_EMAIL,
+    }
+
+
 @app.get("/workflows", response_class=HTMLResponse)
-async def serve_workflows():
-    return _serve("workflows.html")
+def serve_workflows():
+    return _page("workflows.html", "/workflows")
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def serve_login():
-    return _serve("login.html")
+def serve_login():
+    return _page("login.html", "/login")
 
 
 @app.get("/signup", response_class=HTMLResponse)
-async def serve_signup():
-    return _serve("signup.html")
+def serve_signup():
+    return _page("signup.html", "/signup")
 
 @app.get("/forgot-password", response_class=HTMLResponse)
-async def serve_forgot_password():
-    return _serve("forgot-password.html")
+def serve_forgot_password():
+    return _page("forgot-password.html", "/forgot-password")
 
 @app.get("/reset-password", response_class=HTMLResponse)
-async def serve_reset_password():
-    return _serve("reset-password.html")
+def serve_reset_password():
+    return _page("reset-password.html", "/reset-password")
 
 @app.get("/verify-email", response_class=HTMLResponse)
-async def serve_verify_email():
-    return _serve("verify-email.html")
+def serve_verify_email():
+    return _page("verify-email.html", "/verify-email")
 
 
 # ── API ROUTES ────────────────────────────────────────────────────────────────
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(response: Response):
+    """A health check that can fail. The previous one always returned ok, which
+    meant it monitored nothing."""
+    checks = {"database": "ok"}
+    try:
+        with _db() as db:
+            db.execute("SELECT 1")
+    except Exception:
+        logger.exception("Health check: database unreachable")
+        checks["database"] = "error"
+
+    integrations = {
+        "google_oauth": bool(getattr(oauth, "google", None)),
+        "email": bool(os.getenv("BREVO_API_KEY") or os.getenv("SMTP_HOST")),
+        "twilio": bool(os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN")),
+    }
+    healthy = all(value == "ok" for value in checks.values())
+    if not healthy:
+        response.status_code = 503
+    return {
+        "status": "ok" if healthy else "degraded",
+        "checks": checks,
+        "integrations": integrations,
+        "dispatcher": "active" if _scheduler_enabled() else "inactive",
+        "delivery_mode": os.getenv("COMMUNICATION_DELIVERY_MODE", "preview"),
+    }
 
 
 @app.post("/api/token")
 @limiter.limit("5/minute")
-async def login(response: Response, request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+def login(response: Response, request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     user = _authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -933,12 +1583,12 @@ async def login(response: Response, request: Request, form_data: OAuth2PasswordR
 class RegisterInput(BaseModel):
     email: EmailStr
     password: str
-    full_name: Optional[str] = None
+    full_name: str | None = None
 
 
 @app.post("/api/register", status_code=201)
 @limiter.limit("3/minute")
-async def register(request: Request, body: RegisterInput):
+def register(request: Request, body: RegisterInput):
     if not _password_is_valid(body.password):
         raise HTTPException(status_code=400, detail="Password must be between 12 and 128 characters.")
 
@@ -952,10 +1602,9 @@ async def register(request: Request, body: RegisterInput):
                 except RuntimeError:
                     logger.exception("Could not resend verification email")
             return {"message": "If this email can be registered, a verification message has been sent."}
-        returning = " RETURNING id" if USING_POSTGRES else ""
         cursor = db.execute(
             """INSERT INTO users(email, password_hash, full_name, email_verified, created_at)
-               VALUES (?, ?, ?, 0, ?)""" + returning,
+               VALUES (?, ?, ?, 0, ?) RETURNING id""",
             (
                 email,
                 bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode(),
@@ -963,7 +1612,7 @@ async def register(request: Request, body: RegisterInput):
                 _utcnow().isoformat(),
             ),
         )
-        user_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+        user_id = cursor.fetchone()["id"]
         user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     try:
         _send_verification_email(user)
@@ -978,7 +1627,7 @@ class EmailInput(BaseModel):
 
 @app.post("/api/resend-verification")
 @limiter.limit("3/hour")
-async def resend_verification(request: Request, body: EmailInput):
+def resend_verification(request: Request, body: EmailInput):
     with _db() as db:
         user = db.execute("SELECT * FROM users WHERE email = ?", (_normalize_email(str(body.email)),)).fetchone()
     if user and not user["email_verified"]:
@@ -990,7 +1639,7 @@ async def resend_verification(request: Request, body: EmailInput):
 
 @app.post("/api/verify-email")
 @limiter.limit("10/hour")
-async def verify_email(request: Request, body: dict):
+def verify_email(request: Request, body: dict):
     raw_token = str(body.get("token", ""))
     user = _consume_action_token(raw_token, "verify_email")
     if not user:
@@ -1001,7 +1650,7 @@ async def verify_email(request: Request, body: dict):
 
 @app.post("/api/forgot-password")
 @limiter.limit("3/hour")
-async def forgot_password(request: Request, body: EmailInput):
+def forgot_password(request: Request, body: EmailInput):
     with _db() as db:
         user = db.execute("SELECT * FROM users WHERE email = ?", (_normalize_email(str(body.email)),)).fetchone()
     if user and user["password_hash"]:
@@ -1017,7 +1666,7 @@ class ResetPasswordInput(BaseModel):
 
 @app.post("/api/reset-password")
 @limiter.limit("5/hour")
-async def reset_password(request: Request, body: ResetPasswordInput):
+def reset_password(request: Request, body: ResetPasswordInput):
     if not _password_is_valid(body.password):
         raise HTTPException(status_code=400, detail="Password must be between 12 and 128 characters.")
     user = _consume_action_token(body.token, "reset_password")
@@ -1043,7 +1692,10 @@ async def reset_password(request: Request, body: ResetPasswordInput):
 @limiter.limit("20/hour")
 async def google_login(request: Request):
     if not getattr(oauth, "google", None):
-        raise HTTPException(status_code=503, detail="Google sign-in is not configured.")
+        # This is a browser navigation, so send the visitor back to a page that
+        # explains itself. The callback already behaves this way; raising a raw
+        # JSON 503 here left them staring at {"detail": ...}.
+        return RedirectResponse("/login?error=google_unavailable", status_code=303)
     redirect_uri = f"{APP_BASE_URL}/auth/google/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -1072,20 +1724,19 @@ async def google_callback(request: Request):
             )
             user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
         else:
-            returning = " RETURNING id" if USING_POSTGRES else ""
             cursor = db.execute(
                 """INSERT INTO users(email, full_name, google_sub, email_verified, created_at)
-                   VALUES (?, ?, ?, 1, ?)""" + returning,
+                   VALUES (?, ?, ?, 1, ?) RETURNING id""",
                 (email, str(info.get("name", ""))[:120], info["sub"], _utcnow().isoformat()),
             )
-            user_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+            user_id = cursor.fetchone()["id"]
             user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     response = RedirectResponse("/app", status_code=303)
     _set_auth_cookies(response, user)
     return response
 
 @app.get("/api/me")
-async def me(current_user=Depends(get_current_user)):
+def me(current_user=Depends(get_current_user)):
     return {
         "email": current_user["email"],
         "full_name": current_user["full_name"],
@@ -1094,7 +1745,7 @@ async def me(current_user=Depends(get_current_user)):
     }
 
 @app.post("/api/logout")
-async def logout(request: Request, response: Response):
+def logout(request: Request, response: Response):
     _require_csrf(request)
     _clear_auth_cookies(response)
     return {"message": "Signed out."}
@@ -1102,8 +1753,8 @@ async def logout(request: Request, response: Response):
 
 class PatientInput(BaseModel):
     name: str
-    phone: Optional[str] = None
-    email: Optional[EmailStr] = None
+    phone: str | None = None
+    email: EmailStr | None = None
     timezone: str = "America/New_York"
     sms_consent: bool = False
     voice_consent: bool = False
@@ -1127,18 +1778,35 @@ def _authenticated_write(request: Request) -> None:
 
 
 @app.get("/api/workflows/overview")
-async def workflow_overview(current_user=Depends(get_current_user)):
+def workflow_overview(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user=Depends(get_current_user),
+):
+    """Paginated. Previously this returned every patient and appointment, and
+    each patient costs three AES decryptions — so a practice with thousands of
+    records produced a multi-megabyte response the UI then truncated to five
+    rows per table."""
     with _db() as db:
+        totals = db.execute(
+            """SELECT
+                 (SELECT COUNT(*) FROM patients WHERE owner_user_id = ?) AS patients,
+                 (SELECT COUNT(*) FROM appointments WHERE owner_user_id = ?) AS appointments,
+                 (SELECT COUNT(*) FROM reminder_jobs WHERE owner_user_id = ?) AS reminders,
+                 (SELECT COUNT(*) FROM communication_events WHERE owner_user_id = ?) AS events""",
+            (current_user["id"],) * 4,
+        ).fetchone()
         patients = db.execute(
-            "SELECT * FROM patients WHERE owner_user_id = ? ORDER BY created_at DESC",
-            (current_user["id"],),
+            """SELECT * FROM patients WHERE owner_user_id = ?
+               ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            (current_user["id"], limit, offset),
         ).fetchall()
         appointments = db.execute(
-            """SELECT appointments.*, patients.name_encrypted
+            """SELECT appointments.*, patients.name_encrypted, patients.timezone AS patient_timezone
                FROM appointments JOIN patients ON patients.id = appointments.patient_id
                WHERE appointments.owner_user_id = ?
-               ORDER BY appointments.starts_at""",
-            (current_user["id"],),
+               ORDER BY appointments.starts_at LIMIT ? OFFSET ?""",
+            (current_user["id"], limit, offset),
         ).fetchall()
         jobs = db.execute(
             """SELECT reminder_jobs.*, appointments.starts_at, patients.name_encrypted
@@ -1146,16 +1814,16 @@ async def workflow_overview(current_user=Depends(get_current_user)):
                JOIN appointments ON appointments.id = reminder_jobs.appointment_id
                JOIN patients ON patients.id = appointments.patient_id
                WHERE reminder_jobs.owner_user_id = ?
-               ORDER BY reminder_jobs.scheduled_for DESC LIMIT 100""",
-            (current_user["id"],),
+               ORDER BY reminder_jobs.scheduled_for DESC LIMIT ? OFFSET ?""",
+            (current_user["id"], limit, offset),
         ).fetchall()
         events = db.execute(
             """SELECT communication_events.*, patients.name_encrypted
                FROM communication_events
                LEFT JOIN patients ON patients.id = communication_events.patient_id
                WHERE communication_events.owner_user_id = ?
-               ORDER BY communication_events.created_at DESC LIMIT 100""",
-            (current_user["id"],),
+               ORDER BY communication_events.created_at DESC LIMIT ? OFFSET ?""",
+            (current_user["id"], limit, offset),
         ).fetchall()
     return {
         "patients": [_patient_json(row) for row in patients],
@@ -1181,11 +1849,12 @@ async def workflow_overview(current_user=Depends(get_current_user)):
             for row in events
         ],
         "delivery_mode": os.getenv("COMMUNICATION_DELIVERY_MODE", "preview"),
+        "page": {"limit": limit, "offset": offset, "totals": dict(totals)},
     }
 
 
 @app.post("/api/workflows/patients", status_code=201)
-async def create_patient(
+def create_patient(
     request: Request, body: PatientInput, current_user=Depends(get_current_user)
 ):
     _authenticated_write(request)
@@ -1195,27 +1864,35 @@ async def create_patient(
         raise HTTPException(status_code=400, detail="A phone number is required for SMS or voice consent.")
     if body.email_consent and not body.email:
         raise HTTPException(status_code=400, detail="An email address is required for email consent.")
+    patient_timezone = body.timezone.strip()
+    if patient_timezone not in KNOWN_TIMEZONES:
+        # Caught here rather than inside the dispatcher, where the failure would
+        # be invisible to the person who entered it.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown timezone {patient_timezone!r}. Use an IANA name such as America/New_York.",
+        )
     with _db() as db:
-        returning = " RETURNING id" if USING_POSTGRES else ""
         cursor = db.execute(
             """INSERT INTO patients
                (owner_user_id, name_encrypted, phone_encrypted, email_encrypted,
-                timezone, sms_consent, voice_consent, email_consent, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""" + returning,
+                phone_hmac, timezone, sms_consent, voice_consent, email_consent, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (
                 current_user["id"], aes_encrypt(body.name.strip()),
                 _encrypt_optional(body.phone), _encrypt_optional(str(body.email) if body.email else None),
-                body.timezone.strip()[:80], int(body.sms_consent), int(body.voice_consent),
+                phone_fingerprint(body.phone or ""),
+                patient_timezone, int(body.sms_consent), int(body.voice_consent),
                 int(body.email_consent), _utcnow().isoformat(),
             ),
         )
-        patient_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+        patient_id = cursor.fetchone()["id"]
         row = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
     return _patient_json(row)
 
 
 @app.post("/api/workflows/appointments", status_code=201)
-async def create_appointment(
+def create_appointment(
     request: Request, body: AppointmentInput, current_user=Depends(get_current_user)
 ):
     _authenticated_write(request)
@@ -1229,18 +1906,17 @@ async def create_appointment(
         ).fetchone()
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found.")
-        returning = " RETURNING id" if USING_POSTGRES else ""
         cursor = db.execute(
             """INSERT INTO appointments
                (owner_user_id, patient_id, starts_at, clinician, location, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""" + returning,
+               VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
             (
                 current_user["id"], body.patient_id, _iso_datetime(starts_at),
                 body.clinician.strip()[:120], body.location.strip()[:200],
                 _utcnow().isoformat(),
             ),
         )
-        appointment_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
+        appointment_id = cursor.fetchone()["id"]
         appointment = _appointment_row(db, appointment_id, current_user["id"])
         reminders_created = _schedule_reminders(db, appointment)
     result = _appointment_json(appointment)
@@ -1249,7 +1925,7 @@ async def create_appointment(
 
 
 @app.patch("/api/workflows/appointments/{appointment_id}")
-async def update_appointment_status(
+def update_appointment_status(
     appointment_id: int,
     request: Request,
     body: AppointmentStatusInput,
@@ -1274,13 +1950,61 @@ async def update_appointment_status(
 
 
 @app.post("/api/workflows/dispatch")
-async def dispatch_reminders_now(
+def dispatch_reminders_now(
     request: Request, current_user=Depends(get_current_user)
 ):
     _authenticated_write(request)
-    # The dispatcher safely claims jobs across all tenants. It returns only counts,
-    # and never exposes another practice's data.
-    return dispatch_due_reminders()
+    # Scoped to the caller: a practice may only trigger delivery of its own
+    # reminders. The background scheduler is the only unscoped caller.
+    return dispatch_due_reminders(owner_user_id=current_user["id"])
+
+
+class HandoffStatusInput(BaseModel):
+    status: Literal["queued", "transferred", "resolved"]
+
+
+@app.get("/api/workflows/handoffs")
+def list_handoffs(current_user=Depends(get_current_user)):
+    """The front-desk callback queue. Without this the inbound-call feature
+    writes rows that no one can read."""
+    with _db() as db:
+        rows = db.execute(
+            """SELECT * FROM call_handoffs
+               WHERE owner_user_id = ? AND status != 'resolved'
+               ORDER BY created_at DESC LIMIT 100""",
+            (current_user["id"],),
+        ).fetchall()
+    return {
+        "handoffs": [
+            {
+                "id": row["id"],
+                "caller_phone": _decrypt_optional(row["caller_phone_encrypted"]),
+                "reason": row["reason"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.patch("/api/workflows/handoffs/{handoff_id}")
+def update_handoff(
+    handoff_id: int,
+    request: Request,
+    body: HandoffStatusInput,
+    current_user=Depends(get_current_user),
+):
+    _authenticated_write(request)
+    resolved_at = _utcnow().isoformat() if body.status == "resolved" else None
+    with _db() as db:
+        updated = db.execute(
+            "UPDATE call_handoffs SET status = ?, resolved_at = ? WHERE id = ? AND owner_user_id = ?",
+            (body.status, resolved_at, handoff_id, current_user["id"]),
+        ).rowcount
+    if not updated:
+        raise HTTPException(status_code=404, detail="Handoff not found.")
+    return {"id": handoff_id, "status": body.status}
 
 
 def _twiml(content: str) -> FastAPIResponse:
@@ -1290,17 +2014,147 @@ def _twiml(content: str) -> FastAPIResponse:
     )
 
 
+def _twilio_webhook_url(request: Request) -> str:
+    """Rebuild the URL Twilio signed.
+
+    Behind a TLS-terminating proxy, request.url reports http:// while Twilio
+    signed the https:// URL configured on the number, so the HMACs never match
+    and every webhook 403s. APP_BASE_URL is required in production and cannot be
+    spoofed by a request header, so it is the trustworthy source for scheme and
+    host.
+    """
+    target = APP_BASE_URL + request.url.path
+    return f"{target}?{request.url.query}" if request.url.query else target
+
+
 def _twilio_signature_is_valid(request: Request, form: dict) -> bool:
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
     signature = request.headers.get("X-Twilio-Signature", "")
     if not auth_token:
-        return not IS_PRODUCTION
-    url = str(request.url)
-    payload = url + "".join(key + str(form[key]) for key in sorted(form))
+        # Fail closed unless the bypass is asked for by name. Deriving it from a
+        # merely-absent credential means one unset variable silently opens the
+        # webhook to anyone.
+        allow_unsigned = os.getenv("TWILIO_SKIP_SIGNATURE_CHECK", "false").lower() == "true"
+        if allow_unsigned and IS_PRODUCTION:
+            raise RuntimeError("TWILIO_SKIP_SIGNATURE_CHECK must never be enabled in production.")
+        return allow_unsigned
+    payload = _twilio_webhook_url(request) + "".join(
+        key + str(form[key]) for key in sorted(form)
+    )
     expected = base64.b64encode(
         hmac.new(auth_token.encode(), payload.encode(), hashlib.sha1).digest()
     ).decode()
     return hmac.compare_digest(signature, expected)
+
+
+def _resolve_practice(called_number: str) -> int | None:
+    """Attribute an inbound call to the practice that owns the dialled number."""
+    if not called_number:
+        return None
+    with _db() as db:
+        row = db.execute(
+            "SELECT owner_user_id FROM practice_phone_numbers WHERE phone_number = ?",
+            (called_number,),
+        ).fetchone()
+    return row["owner_user_id"] if row else None
+
+
+def _record_inbound_call(speech: str, caller: str, called: str, wants_front_desk: bool) -> None:
+    """Persist an inbound call. Runs off the event loop via asyncio.to_thread."""
+    owner_user_id = _resolve_practice(called)
+    now = _utcnow().isoformat()
+    with _db() as db:
+        db.execute(
+            """INSERT INTO communication_events
+               (owner_user_id, channel, direction, outcome, detail, created_at)
+               VALUES (?, 'voice', 'inbound', ?, ?, ?)""",
+            (
+                owner_user_id,
+                "front_desk_handoff" if wants_front_desk else "automated_triage",
+                speech[:500], now,
+            ),
+        )
+        if wants_front_desk:
+            db.execute(
+                """INSERT INTO call_handoffs
+                   (owner_user_id, caller_phone_encrypted, reason, status, created_at)
+                   VALUES (?, ?, ?, 'queued', ?)""",
+                (
+                    owner_user_id, _encrypt_optional(caller),
+                    (speech or "Caller pressed zero")[:500], now,
+                ),
+            )
+
+
+def _apply_sms_optout(from_number: str, opting_out: bool) -> int:
+    """Record a STOP or START and bring consent into line with it.
+
+    The carrier stops delivery on STOP regardless, but without this the database
+    keeps asserting consent the patient has withdrawn — and for a product built
+    around per-channel consent, knowingly wrong consent state is the problem.
+    """
+    fingerprint = phone_fingerprint(from_number)
+    if not fingerprint:
+        return 0
+    now = _utcnow().isoformat()
+    with _db() as db:
+        patients = db.execute(
+            "SELECT id, owner_user_id FROM patients WHERE phone_hmac = ?", (fingerprint,)
+        ).fetchall()
+        for patient in patients:
+            db.execute(
+                "UPDATE patients SET sms_consent = ? WHERE id = ?",
+                (0 if opting_out else 1, patient["id"]),
+            )
+            if opting_out:
+                db.execute(
+                    """UPDATE reminder_jobs SET status = 'cancelled'
+                       WHERE channel = 'sms' AND status IN ('pending', 'processing')
+                         AND appointment_id IN (
+                             SELECT id FROM appointments WHERE patient_id = ?
+                         )""",
+                    (patient["id"],),
+                )
+            db.execute(
+                """INSERT INTO communication_events
+                   (owner_user_id, patient_id, channel, direction, outcome, detail, created_at)
+                   VALUES (?, ?, 'sms', 'inbound', ?, ?, ?)""",
+                (
+                    patient["owner_user_id"], patient["id"],
+                    "opt_out" if opting_out else "opt_in",
+                    "Patient replied STOP" if opting_out else "Patient replied START",
+                    now,
+                ),
+            )
+    return len(patients)
+
+
+@app.post("/webhooks/twilio/inbound-sms")
+async def inbound_sms(request: Request):
+    """Handle STOP/START replies to outbound reminders."""
+    form_data = dict(await request.form())
+    if not _twilio_signature_is_valid(request, form_data):
+        raise HTTPException(status_code=403, detail="Invalid provider signature.")
+    body = str(form_data.get("Body", "")).strip().lower()
+    from_number = str(form_data.get("From", ""))
+
+    if body in SMS_STOP_KEYWORDS:
+        matched = await asyncio.to_thread(_apply_sms_optout, from_number, True)
+        logger.info("SMS opt-out applied to %d patient record(s)", matched)
+        return _twiml(
+            "<Message>You are unsubscribed and will not receive further messages. "
+            "Reply START to resubscribe.</Message>"
+        )
+    if body in SMS_START_KEYWORDS:
+        matched = await asyncio.to_thread(_apply_sms_optout, from_number, False)
+        logger.info("SMS opt-in applied to %d patient record(s)", matched)
+        return _twiml("<Message>You are resubscribed to appointment reminders.</Message>")
+
+    # Never invite clinical detail over SMS.
+    return _twiml(
+        "<Message>This number is not monitored. Please call the office for help. "
+        "Reply STOP to unsubscribe.</Message>"
+    )
 
 
 @app.post("/webhooks/twilio/inbound-call")
@@ -1311,23 +2165,9 @@ async def inbound_call(request: Request):
     speech = str(form_data.get("SpeechResult", "")).lower()
     digits = str(form_data.get("Digits", ""))
     caller = str(form_data.get("From", ""))
+    called = str(form_data.get("To", ""))
     wants_front_desk = digits == "0" or any(keyword in speech for keyword in FRONT_DESK_KEYWORDS)
-    with _db() as db:
-        db.execute(
-            """INSERT INTO communication_events
-               (channel, direction, outcome, detail, created_at)
-               VALUES ('voice', 'inbound', ?, ?, ?)""",
-            (
-                "front_desk_handoff" if wants_front_desk else "automated_triage",
-                speech[:500], _utcnow().isoformat(),
-            ),
-        )
-        if wants_front_desk:
-            db.execute(
-                """INSERT INTO call_handoffs(caller_phone_encrypted, reason, status, created_at)
-                   VALUES (?, ?, 'queued', ?)""",
-                (_encrypt_optional(caller), (speech or "Caller pressed zero")[:500], _utcnow().isoformat()),
-            )
+    await asyncio.to_thread(_record_inbound_call, speech, caller, called, wants_front_desk)
     if wants_front_desk:
         number = os.getenv("FRONT_DESK_PHONE_NUMBER")
         if number:
@@ -1373,26 +2213,136 @@ async def reminder_voice(request: Request, appointment_id: int):
     return _twiml(f"<Say>{html.escape(message)}</Say>")
 
 
+_shutdown = asyncio.Event()
+
+
+def _purge_expired_analytics_now() -> None:
+    with _db() as db:
+        _purge_expired_analytics(db)
+
+
 async def _reminder_scheduler() -> None:
-    while True:
+    """Dispatch loop. Exits at a clean iteration boundary on shutdown."""
+    purge_countdown = 0
+    while not _shutdown.is_set():
         try:
             await asyncio.to_thread(dispatch_due_reminders)
+            # Retention housekeeping runs hourly here rather than on every
+            # analytics write, where it cost a full-table scan per page view.
+            purge_countdown -= 1
+            if purge_countdown <= 0:
+                await asyncio.to_thread(_purge_expired_analytics_now)
+                purge_countdown = 60
         except Exception:
             logger.exception("Reminder scheduler iteration failed")
-        await asyncio.sleep(60)
+        try:
+            await asyncio.wait_for(_shutdown.wait(), timeout=60)
+        except TimeoutError:
+            continue
 
 
-@app.on_event("startup")
-async def start_reminder_scheduler():
-    if os.getenv("WORKFLOW_SCHEDULER_ENABLED", "true").lower() == "true":
-        app.state.reminder_scheduler_task = asyncio.create_task(_reminder_scheduler())
+def _scheduler_enabled() -> bool:
+    """Default off. A dispatcher that runs in every web worker sends duplicate
+    reminders, so enabling it must be a deliberate act on exactly one service."""
+    legacy = os.getenv("WORKFLOW_SCHEDULER_ENABLED")
+    if legacy is not None:
+        logger.warning("WORKFLOW_SCHEDULER_ENABLED is deprecated; use WORKFLOW_WORKER.")
+        return legacy.lower() == "true"
+    return os.getenv("WORKFLOW_WORKER", "false").lower() == "true"
 
 
-@app.on_event("shutdown")
-async def stop_reminder_scheduler():
-    task = getattr(app.state, "reminder_scheduler_task", None)
-    if task:
-        task.cancel()
+ENCRYPTED_COLUMNS = {
+    "patients": ("name_encrypted", "phone_encrypted", "email_encrypted"),
+    "call_handoffs": ("caller_phone_encrypted",),
+}
+
+
+def rotate_encryption_keys(batch_size: int = 500) -> dict:
+    """Re-encrypt values written under a superseded key.
+
+    Safe to run repeatedly and safe to interrupt: each row is independent, and a
+    row already on the current version is skipped. Run it after adding a new key
+    version until it reports zero rotated.
+    """
+    rotated = 0
+    for table, columns in ENCRYPTED_COLUMNS.items():
+        with _db() as db:
+            selected = ", ".join(("id", *columns))
+            rows = db.execute(
+                f"SELECT {selected} FROM {table} LIMIT ?",  # noqa: S608 - identifiers are module constants
+                (batch_size,),
+            ).fetchall()
+            for row in rows:
+                updates = {}
+                for column in columns:
+                    value = row[column]
+                    if not aes_needs_rotation(value):
+                        continue
+                    try:
+                        updates[column] = aes_encrypt(aes_decrypt(value))
+                    except (InvalidTag, ValueError, binascii.Error):
+                        logger.error(
+                            "Cannot rotate %s.%s for id=%s: value is unreadable",
+                            table, column, row["id"],
+                        )
+                if updates:
+                    assignments = ", ".join(f"{column} = ?" for column in updates)
+                    db.execute(
+                        f"UPDATE {table} SET {assignments} WHERE id = ?",  # noqa: S608 - identifiers are module constants
+                        (*updates.values(), row["id"]),
+                    )
+                    rotated += 1
+    if rotated:
+        logger.info("Re-encrypted %d row(s) to key version %d", rotated, CURRENT_KEY_VERSION)
+    return {"rotated": rotated, "key_version": CURRENT_KEY_VERSION}
+
+
+def _backfill_phone_fingerprints() -> int:
+    """Populate phone_hmac for patients created before the column existed."""
+    with _db() as db:
+        rows = db.execute(
+            "SELECT id, phone_encrypted FROM patients WHERE phone_hmac IS NULL AND phone_encrypted IS NOT NULL"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            fingerprint = phone_fingerprint(_decrypt_optional(row["phone_encrypted"]))
+            if fingerprint:
+                db.execute(
+                    "UPDATE patients SET phone_hmac = ? WHERE id = ?", (fingerprint, row["id"])
+                )
+                updated += 1
+    if updated:
+        logger.info("Backfilled phone fingerprints for %d patient(s)", updated)
+    return updated
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Alembic owns the PostgreSQL schema ('alembic upgrade head' runs pre-deploy).
+    # _init_db() remains for local SQLite development, and tests assert the two
+    # produce the same schema so they cannot drift.
+    if not USING_POSTGRES:
+        _init_db()
+    _backfill_phone_fingerprints()
+    task = None
+    if _scheduler_enabled():
+        logger.info("reminder dispatcher: ACTIVE in this process")
+        task = asyncio.create_task(_reminder_scheduler())
+    else:
+        logger.info("reminder dispatcher: INACTIVE (set WORKFLOW_WORKER=true on one service)")
+    try:
+        yield
+    finally:
+        _shutdown.set()
+        if task:
+            try:
+                await asyncio.wait_for(task, timeout=10)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+        _close_pool()
+
+
+app.router.lifespan_context = lifespan
 
 
 class NoteInput(BaseModel):
@@ -1413,7 +2363,7 @@ ALLOWED_ANALYTICS_PAGES = {"app"}
 
 @app.post("/api/analytics/events", status_code=204)
 @limiter.limit("60/minute")
-async def analytics_event(
+def analytics_event(
     request: Request,
     body: AnalyticsEventInput,
     current_user=Depends(get_current_user),
@@ -1426,7 +2376,7 @@ async def analytics_event(
     return Response(status_code=204)
 
 @app.delete("/api/analytics/me", status_code=204)
-async def disable_my_analytics(request: Request, current_user=Depends(get_current_user)):
+def disable_my_analytics(request: Request, current_user=Depends(get_current_user)):
     _require_csrf(request)
     with _db() as db:
         db.execute("DELETE FROM analytics_events WHERE user_id = ?", (current_user["id"],))
@@ -1434,14 +2384,14 @@ async def disable_my_analytics(request: Request, current_user=Depends(get_curren
     return Response(status_code=204)
 
 @app.put("/api/analytics/me", status_code=204)
-async def enable_my_analytics(request: Request, current_user=Depends(get_current_user)):
+def enable_my_analytics(request: Request, current_user=Depends(get_current_user)):
     _require_csrf(request)
     with _db() as db:
         db.execute("UPDATE users SET analytics_enabled = 1 WHERE id = ?", (current_user["id"],))
     return Response(status_code=204)
 
 @app.get("/api/admin/analytics")
-async def admin_analytics(admin_user=Depends(get_admin_user)):
+def admin_analytics(admin_user=Depends(get_admin_user)):
     with _db() as db:
         _purge_expired_analytics(db)
         totals = db.execute("""
@@ -1496,7 +2446,7 @@ async def admin_analytics(admin_user=Depends(get_admin_user)):
 
 @app.post("/api/extract")
 @limiter.limit("10/minute")
-async def api_extract(
+def api_extract(
     request: Request,
     input: NoteInput,
     current_user=Depends(get_current_user),
@@ -1507,9 +2457,20 @@ async def api_extract(
         raise HTTPException(status_code=400, detail="No clinical note provided.")
     try:
         result = extract_medical_codes(input.note)
-        _ = aes_encrypt(input.note)  # audit log (persist in production)
         _record_event(current_user["id"], "extraction_succeeded")
         return {"result": result}
-    except Exception as e:
+    except Exception:
+        # Never surface provider exception text to the client: SDK errors carry
+        # request ids, org identifiers, and occasionally fragments of the request.
+        reference = secrets.token_hex(6)
+        logger.exception(
+            "Extraction failed (reference=%s, user=%s)", reference, current_user["id"]
+        )
         _record_event(current_user["id"], "extraction_failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(  # noqa: B904 - the cause is logged; clients get a reference only
+            status_code=500,
+            detail=(
+                "Extraction failed. Try again, or contact support with "
+                f"reference {reference} if this continues."
+            ),
+        )

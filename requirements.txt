@@ -1,14 +1,21 @@
-fastapi
-uvicorn
-openai
-python-multipart
-python-dotenv
-slowapi
-python-jose[cryptography]
-bcrypt
-cryptography
-authlib
-email-validator
-httpx
-itsdangerous
-psycopg[binary]
+# Runtime dependencies, pinned.
+# Bare names meant two deploys of identical source could install different
+# software. Regenerate after an intentional upgrade with: pip freeze
+
+fastapi==0.141.1  # web framework
+uvicorn==0.52.4  # ASGI server
+openai==3.3.1  # code extraction
+python-multipart==0.0.32  # form parsing for Twilio webhooks
+python-dotenv==1.2.3  # local .env loading
+slowapi==0.1.10  # rate limiting
+python-jose[cryptography]==3.5.0  # session JWTs
+bcrypt==5.0.0  # password hashing
+cryptography==50.0.0  # AES-256-GCM field encryption
+authlib==1.7.2  # Google OpenID Connect
+email-validator==2.3.0  # EmailStr validation
+httpx==0.28.1  # Brevo and Twilio HTTP calls
+itsdangerous==2.2.0  # signed session middleware
+psycopg[binary]==3.3.4  # PostgreSQL driver
+psycopg-pool==3.3.1  # connection pooling
+alembic==1.19.1  # schema migrations (run pre-deploy)
+sqlalchemy==2.0.52  # required by alembic

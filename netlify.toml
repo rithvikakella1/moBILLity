@@ -1,3 +1,33 @@
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Everything below is proxied to the API so the browser sees a single origin.
+# That is what keeps the session cookie first-party — a cross-origin SPA would
+# need SameSite=None and a CORS credentials dance the current auth avoids.
+
+# /admin must be proxied, not served statically. Netlify would otherwise return
+# a built page straight from the CDN, bypassing the server-side admin check on
+# the FastAPI route. (There is deliberately no admin page in the Astro build.)
+[[redirects]]
+  from = "/admin"
+  to = "https://mobillity-api.onrender.com/admin"
+  status = 200
+  force = true
+
+# /static holds assets the API serves for the pages it renders — notably
+# admin.js, which /admin references. Without this the CDN answers 404 and the
+# admin dashboard renders blank.
+[[redirects]]
+  from = "/static/*"
+  to = "https://mobillity-api.onrender.com/static/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/api/*"
   to = "https://mobillity-api.onrender.com/api/:splat"
@@ -9,3 +39,41 @@
   to = "https://mobillity-api.onrender.com/auth/:splat"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/webhooks/*"
+  to = "https://mobillity-api.onrender.com/webhooks/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://mobillity-api.onrender.com/health"
+  status = 200
+  force = true
+
+# Security headers for the statically served pages. The API sets its own on
+# proxied responses; these cover what Netlify serves directly.
+#
+# script-src has no 'unsafe-inline': the build emits no inline <script>, and CI
+# fails if one reappears. connect-src 'self' is what stops an injected handler
+# from exfiltrating the CSRF cookie, which is readable by design.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Hashed asset filenames, so a long lifetime is safe.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache"

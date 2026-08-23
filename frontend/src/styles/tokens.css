@@ -1,0 +1,53 @@
+/* Design tokens — the single source of truth for the moBILLity palette.
+ *
+ * These were previously redeclared in five separate HTML files, which is how
+ * they drifted: --teal existed as both #00bfa6 and #00c2a8, --line as both
+ * #e6e3dc and #dfddd6, and --red as both #ef4444 and #b42318. The values below
+ * are the reconciled set.
+ *
+ * Contrast note: the brand teal measures 2.33:1 on white, far under the 4.5:1
+ * WCAG AA needs for text. Use --teal for fills, borders, and large decorative
+ * elements; use --teal-text whenever the colour carries words on a light
+ * ground, and --teal on dark grounds where it measures 7.8:1.
+ */
+:root {
+  /* Brand */
+  --navy: #0a1628;
+  --navy-mid: #0f2040;
+  --teal: #00bfa6;          /* fills, borders, decoration, text on navy */
+  --teal-text: #04796b;     /* 5.31:1 on white, 4.76:1 on cream */
+  --teal-light: #00e5c7;    /* hover state on dark grounds */
+
+  /* Grounds */
+  --cream: #f5f2ec;
+  --cream-dark: #ede9e0;
+  --white: #ffffff;
+  --card-bg: #ffffff;
+
+  /* Ink */
+  --text-dark: #0a1628;
+  --text-mid: #4a5568;
+  --text-light: #8896a5;
+  --muted: #596579;         /* 5.28:1 on cream */
+
+  /* Lines */
+  --line: #e5e2db;
+  --border: rgba(10, 22, 40, 0.09);
+
+  /* Semantic — separate from the brand accent by design */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --amber: #f59e0b;
+  --error: #ef4444;         /* bright, for borders and fills */
+  --danger: #b42318;        /* dark, for error text on light grounds */
+  --blue-accent: #3b82f6;
+
+  /* Type */
+  --font-display: "DM Serif Display", Georgia, serif;
+  --font-body: "DM Sans", system-ui, -apple-system, sans-serif;
+
+  /* Elevation */
+  --shadow-sm: 0 2px 10px rgba(10, 22, 40, 0.06);
+  --shadow-md: 0 8px 30px rgba(10, 22, 40, 0.045);
+  --shadow-lg: 0 24px 70px rgba(10, 22, 40, 0.13);
+}

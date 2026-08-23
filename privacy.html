@@ -5,8 +5,24 @@
   <title>Privacy · moBILLity</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    :root{--navy:#0a1628;--teal:#00bfa6;--cream:#f5f2ec;--muted:#596579;--line:#dfddd6}*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font:16px/1.7 "DM Sans",sans-serif}header{padding:20px 5%;border-bottom:1px solid var(--line)}header a{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}header span{color:var(--teal)}main{max-width:780px;margin:auto;padding:54px 24px 80px}h1,h2{font-family:"DM Serif Display";font-weight:400}h1{font-size:46px;line-height:1.1;margin:0 0 10px}h2{font-size:25px;margin:34px 0 6px}p,li{color:var(--muted)}.date{font-size:13px}.callout{background:white;border:1px solid var(--line);border-left:4px solid var(--teal);border-radius:12px;padding:16px 19px;margin:24px 0}button{border:0;border-radius:99px;background:var(--navy);color:white;padding:11px 18px;font:600 14px "DM Sans";cursor:pointer}.status{margin-left:10px;font-size:13px}a{color:#087768}
-  </style>
+    :root{--navy:#0a1628;--teal:#00bfa6;--teal-text:#04796b;--cream:#f5f2ec;--muted:#596579;--line:#dfddd6}*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font:16px/1.7 "DM Sans",sans-serif}header{padding:20px 5%;border-bottom:1px solid var(--line)}header a{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}header span{color:var(--teal-text)}main{max-width:780px;margin:auto;padding:54px 24px 80px}h1,h2{font-family:"DM Serif Display";font-weight:400}h1{font-size:46px;line-height:1.1;margin:0 0 10px}h2{font-size:25px;margin:34px 0 6px}p,li{color:var(--muted)}.date{font-size:13px}.callout{background:white;border:1px solid var(--line);border-left:4px solid var(--teal);border-radius:12px;padding:16px 19px;margin:24px 0}button{border:0;border-radius:99px;background:var(--navy);color:white;padding:11px 18px;font:600 14px "DM Sans";cursor:pointer}.status{margin-left:10px;font-size:13px}a{color:#087768}
+  
+    /* Keyboard focus must always be visible. :focus-visible shows the ring for
+       keyboard users without adding one on mouse click. */
+    :focus-visible {
+      outline: 3px solid var(--teal-text, #04796b);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+</style>
 </head>
 <body><header><a href="/">mo<span>BILL</span>ity</a></header><main>
   <h1>Privacy notice</h1><p class="date">Effective July 27, 2026</p>

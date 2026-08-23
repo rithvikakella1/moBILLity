@@ -1,0 +1,72 @@
+---
+import Auth from "../layouts/Auth.astro";
+---
+
+<Auth
+  title="Sign in · moBILLity"
+  heading="Welcome back"
+  intro="Sign in to your secure medical coding workspace."
+>
+  <a class="google" href="/auth/google" id="googleBtn" hidden><span class="google-mark">G</span> Continue with Google</a>
+  <div class="divider" id="googleDivider" hidden>or use your verified email</div>
+  <form id="form" class="auth-form">
+    <label for="email">Email</label>
+    <input class="input" id="email" type="email" autocomplete="email" required />
+    <div class="row">
+      <label for="password">Password</label>
+      <a class="link" href="/forgot-password">Forgot password?</a>
+    </div>
+    <input class="input" id="password" type="password" autocomplete="current-password" required />
+    <button class="button" id="submit" type="submit">Sign in</button>
+  </form>
+  <p class="fine">Protected by rate limits, secure cookies, and encrypted connections.</p>
+  <p slot="footer">New here? <a class="link" href="/signup">Create an account</a></p>
+</Auth>
+
+<script>
+  import { showAlert, payload, onSubmit } from "../lib/forms.js";
+
+  // Only offer Google sign-in when the server has credentials for it. Showing a
+  // button that always fails is worse than not showing one.
+  (async () => {
+    try {
+      const response = await fetch("/health");
+      if (!response.ok) return;
+      const health = await response.json();
+      if (health.integrations?.google_oauth) {
+        document.querySelector("#googleBtn")?.removeAttribute("hidden");
+        document.querySelector("#googleDivider")?.removeAttribute("hidden");
+      }
+    } catch {
+      // Leave it hidden; email sign-in still works.
+    }
+  })();
+
+  const OAUTH_ERRORS = {
+    google_failed: "Google sign-in was cancelled or failed.",
+    google_unavailable: "Google sign-in is not configured yet.",
+    google_unverified: "Google did not provide a verified email.",
+    account_conflict: "That email is linked to another Google account.",
+  };
+
+  const error = new URLSearchParams(window.location.search).get("error");
+  if (error) showAlert(OAUTH_ERRORS[error] || "Sign-in failed.");
+
+  onSubmit("#form", async () => {
+    const body = new URLSearchParams({
+      username: (document.querySelector("#email") as HTMLInputElement).value.trim(),
+      password: (document.querySelector("#password") as HTMLInputElement).value,
+    });
+    const response = await fetch("/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const data = await payload(response);
+    if (!response.ok) throw new Error(data.detail || "Sign-in failed.");
+
+    // Honour ?next= so the /admin redirect returns the visitor where they were.
+    const next = new URLSearchParams(window.location.search).get("next");
+    window.location.href = next && next.startsWith("/") ? next : "/app";
+  });
+</script>

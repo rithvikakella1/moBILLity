@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      # `ruff format --check` is deliberately not enabled yet. Reformatting the
+      # existing files would produce a large diff that buries the behavioural
+      # changes under it. Land `ruff format .` as its own commit, then add:
+      #   - name: Format check
+      #     run: ruff format --check .
+
+      - name: Test
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: frontend
+
+      - name: Type-check and build
+        run: |
+          npx astro check --minimumSeverity error
+          npm run build
+        working-directory: frontend
+
+      # Extraction results are model output; a prompt injection in a clinical
+      # note must never become live markup.
+      - name: Prompt-injection escaping
+        run: node scripts/check-xss.js
+
+      - name: Assert no inline scripts survive the build
+        run: |
+          if grep -l '<script>' frontend/dist/*.html 2>/dev/null; then
+            echo "Inline script found — CSP script-src 'self' would break."
+            exit 1
+          fi
+          echo "No inline scripts."
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install pip-audit
+        run: pip install pip-audit==2.9.0
+      - name: Scan dependencies for known vulnerabilities
+        run: pip-audit -r requirements.txt --strict
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan history for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,101 @@
+---
+/**
+ * Navigation for the public landing page.
+ *
+ * The old markup linked to "app.html" directly, which bypassed the /app route
+ * and its auth guard on any host that did not rewrite the extension.
+ */
+const links = [
+  { href: "#how", label: "How it works" },
+  { href: "#features", label: "Features" },
+  { href: "#calling", label: "AI Calling" },
+  { href: "#compliance", label: "Compliance" },
+];
+---
+
+<nav>
+  <a class="nav-logo" href="/">mo<span>BILL</span>ity</a>
+  <ul class="nav-links">
+    {links.map((link) => (
+      <li><a href={link.href}>{link.label}</a></li>
+    ))}
+    <li><a href="/app" class="nav-cta">Launch App →</a></li>
+  </ul>
+</nav>
+
+<style>
+  nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 5%;
+    background: var(--navy);
+    border-bottom: 1px solid rgba(10, 22, 40, 0.08);
+    box-shadow: 0 2px 20px rgba(10, 22, 40, 0.06);
+  }
+
+  .nav-logo {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    color: var(--white);
+    text-decoration: none;
+    letter-spacing: -0.5px;
+    flex-shrink: 0;
+  }
+  /* Bright teal, not --teal-text: on navy this measures 7.8:1 while the dark
+     variant would fail at 3.4:1. */
+  .nav-logo span {
+    color: var(--teal);
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 0.25rem;
+    list-style: none;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+  }
+
+  .nav-links a {
+    text-decoration: none;
+    background: var(--navy);
+    color: var(--white);
+    padding: 0.55rem 1.3rem;
+    border-radius: 50px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    transition:
+      background 0.2s,
+      transform 0.15s,
+      box-shadow 0.2s;
+    box-shadow: 0 2px 10px rgba(10, 22, 40, 0.15);
+    display: inline-block;
+  }
+  .nav-links a:hover {
+    background: var(--teal);
+    color: var(--navy);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 191, 166, 0.3);
+  }
+
+  .nav-cta {
+    background: var(--teal) !important;
+    color: var(--navy) !important;
+    box-shadow: 0 2px 10px rgba(0, 191, 166, 0.3) !important;
+  }
+  .nav-cta:hover {
+    background: var(--teal-light) !important;
+  }
+
+  @media (max-width: 860px) {
+    .nav-links li:not(:last-child) {
+      display: none;
+    }
+  }
+</style>

@@ -9,7 +9,7 @@
     :root {
       --navy: #0a1628;
       --navy-mid: #0f2040;
-      --teal: #00c2a8;
+      --teal: #00c2a8;--teal-text:#04796b;
       --teal-light: #00e5c7;
       --cream: #f5f2ec;
       --cream-dark: #ede9e0;
@@ -56,7 +56,7 @@
       text-decoration: none;
       letter-spacing: -0.5px;
     }
-    .nav-logo span { color: var(--teal); }
+    .nav-logo span { color: var(--teal-text); }
 
     .nav-links {
       display: flex;
@@ -132,7 +132,7 @@
       padding: 0.35rem 0.9rem;
       font-size: 0.75rem;
       font-weight: 600;
-      color: var(--teal);
+      color: var(--teal-text);
       margin-bottom: 1.2rem;
       box-shadow: 0 2px 10px rgba(0,194,168,0.08);
     }
@@ -156,7 +156,7 @@
       line-height: 1.1;
       margin-bottom: 0.7rem;
     }
-    .page-header h1 em { font-style: italic; color: var(--teal); }
+    .page-header h1 em { font-style: italic; color: var(--teal-text); }
 
     .page-header p {
       font-size: 1rem;
@@ -230,7 +230,7 @@
     }
     textarea::placeholder { color: var(--text-light); font-style: italic; }
     textarea:focus {
-      border-color: var(--teal);
+      border-color: var(--teal-text);
       box-shadow: 0 0 0 3px rgba(0,194,168,0.1);
     }
     textarea.listening {
@@ -299,7 +299,7 @@
       cursor: pointer;
       transition: all 0.2s;
     }
-    .btn-mic:hover { border-color: var(--teal); color: var(--teal); }
+    .btn-mic:hover { border-color: var(--teal-text); color: var(--teal-text); }
     .btn-mic.listening {
       background: rgba(239,68,68,0.08);
       border-color: #ef4444;
@@ -355,7 +355,7 @@
       color: var(--text-light);
       white-space: nowrap;
     }
-    .status-msg.active { color: var(--teal); }
+    .status-msg.active { color: var(--teal-text); }
     .status-msg.done   { color: var(--success); }
     .status-msg.error  { color: var(--error); }
 
@@ -405,7 +405,7 @@
     }
     .chip-type {
       font-size: 0.6rem;
-      color: var(--teal);
+      color: var(--teal-text);
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -432,7 +432,7 @@
 
     thead th {
       background: var(--navy);
-      color: var(--teal);
+      color: var(--teal-text);
       font-size: 0.7rem;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -460,7 +460,7 @@
     .badge-icd {
       display: inline-block;
       background: rgba(0,194,168,0.12);
-      color: var(--teal);
+      color: var(--teal-text);
       font-size: 0.68rem;
       font-weight: 800;
       padding: 0.15rem 0.5rem;
@@ -675,7 +675,29 @@
       main { padding: 2rem 1rem 4rem; }
       footer { flex-direction: column; }
     }
-  </style>
+  
+    /* Keyboard focus must always be visible. :focus-visible shows the ring for
+       keyboard users without adding one on mouse click. */
+    :focus-visible {
+      outline: 3px solid var(--teal-text, #04796b);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+</style>
 </head>
 <body>
 
@@ -744,7 +766,7 @@
           <span class="status-msg" id="statusMsg">Ready</span>
         </div>
 
-        <div id="output"></div>
+        <div id="output" role="region" aria-live="polite" aria-atomic="false" aria-label="Extraction results"></div>
 
       </div>
     </div>
@@ -759,6 +781,12 @@
   <script>
     // ── AUTH GUARD ────────────────────────────────────────────────────────────
     const API_BASE = window.location.origin;
+
+    // Escape every value that reaches innerHTML. Extraction results come from a
+    // language model whose input is an arbitrary clinical note, so a prompt
+    // injection can otherwise place executable markup in any string field.
+    const esc = value => String(value ?? '').replace(/[&<>"']/g,
+      c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
     function getCookie(name) {
       return document.cookie.split('; ').find(row => row.startsWith(name + '='))?.split('=')[1] || '';
@@ -795,7 +823,7 @@
           const link = document.createElement('a');
           link.href = '/admin';
           link.textContent = 'Analytics';
-          link.style.cssText = 'font-size:.82rem;color:var(--teal);font-weight:600;text-decoration:none';
+          link.style.cssText = 'font-size:.82rem;color:var(--teal-text);font-weight:600;text-decoration:none';
           document.querySelector('.nav-user')?.prepend(link);
         }
         if (user.analytics_enabled) track('page_view');
@@ -959,7 +987,7 @@
             output.innerHTML = formatResults(result);
           } else {
             // Fallback for unexpected shapes
-            output.innerHTML = `<pre style="font-size:0.85rem;color:var(--text-mid);white-space:pre-wrap;">${JSON.stringify(result, null, 2)}</pre>`;
+            output.innerHTML = `<pre style="font-size:0.85rem;color:var(--text-mid);white-space:pre-wrap;">${esc(JSON.stringify(result, null, 2))}</pre>`;
           }
           output.className = 'visible';
         })
@@ -967,7 +995,7 @@
           clearInterval(ticker);
           setProgress(0, 'Error connecting to server', 'error');
           setLoading(false);
-          output.innerHTML = `<div class="error-box">❌ ${err.message}</div>`;
+          output.innerHTML = `<div class="error-box">❌ ${esc(err.message)}</div>`;
           output.className = 'visible';
         });
     }
@@ -997,25 +1025,25 @@
       // ── Chips row
       const chips = confirmed.map((c, i) => `
         <div class="chip" style="animation-delay:${i * 80}ms">
-          <span class="chip-type">${c.code_type || c.type || 'CODE'}</span>${c.code}
+          <span class="chip-type">${esc(c.code_type || c.type || 'CODE')}</span>${esc(c.code)}
         </div>`).join('');
 
       // ── Confirmed codes table
       const rows = confirmed.map((c, i) => {
         const typeLabel = (c.code_type || '').toUpperCase();
         const badge = (typeLabel === 'ICD-10' || typeLabel === 'ICD')
-          ? `<span class="badge-icd">${typeLabel}</span>`
-          : `<span class="badge-cpt">${typeLabel || c.type || 'CPT'}</span>`;
+          ? `<span class="badge-icd">${esc(typeLabel)}</span>`
+          : `<span class="badge-cpt">${esc(typeLabel || c.type || 'CPT')}</span>`;
 
         const conf    = parseFloat(c.confidence) || 0;
         const pct     = Math.round(conf * 100);
         const cls     = confClass(conf);
 
         return `<tr style="animation-delay:${i * 60}ms">
-          <td>${badge}<br><span class="priority-tag">${c.billing_priority || ''}</span></td>
-          <td class="td-code">${c.code}</td>
-          <td>${c.description || '—'}</td>
-          <td class="td-reasoning">${c.reasoning || '—'}</td>
+          <td>${badge}<br><span class="priority-tag">${esc(c.billing_priority || '')}</span></td>
+          <td class="td-code">${esc(c.code)}</td>
+          <td>${esc(c.description || '—')}</td>
+          <td class="td-reasoning">${esc(c.reasoning || '—')}</td>
           <td>${docBadge(c.documentation_strength)}</td>
           <td class="conf-cell">
             <div class="conf-bar-wrap">
@@ -1032,17 +1060,17 @@
         const sugCards = suggested.map((s, i) => {
           const typeLabel = (s.code_type || '').toUpperCase();
           const badge = (typeLabel === 'ICD-10' || typeLabel === 'ICD')
-            ? `<span class="badge-icd">${typeLabel}</span>`
-            : `<span class="badge-cpt">${typeLabel}</span>`;
+            ? `<span class="badge-icd">${esc(typeLabel)}</span>`
+            : `<span class="badge-cpt">${esc(typeLabel)}</span>`;
           return `
           <div class="sug-card" style="animation-delay:${i * 60}ms">
             <div class="sug-card-top">
               ${badge}
-              <span class="sug-code">${s.code}</span>
-              <span class="sug-desc">${s.description || ''}</span>
+              <span class="sug-code">${esc(s.code)}</span>
+              <span class="sug-desc">${esc(s.description || '')}</span>
             </div>
-            <p class="sug-reason">${s.reason_suggested || ''}</p>
-            ${s.documentation_needed ? `<p class="sug-doc-needed">${s.documentation_needed}</p>` : ''}
+            <p class="sug-reason">${esc(s.reason_suggested || '')}</p>
+            ${s.documentation_needed ? `<p class="sug-doc-needed">${esc(s.documentation_needed)}</p>` : ''}
           </div>`;
         }).join('');
 
@@ -1067,14 +1095,15 @@
         <div class="chips-row">${chips}</div>
         <div class="table-wrap">
           <table>
+            <caption class="visually-hidden">Billable codes extracted from the clinical note</caption>
             <thead>
               <tr>
-                <th>Type</th>
-                <th>Code</th>
-                <th>Description</th>
-                <th>Clinical Reasoning</th>
-                <th>Documentation</th>
-                <th>Confidence</th>
+                <th scope="col">Type</th>
+                <th scope="col">Code</th>
+                <th scope="col">Description</th>
+                <th scope="col">Clinical Reasoning</th>
+                <th scope="col">Documentation</th>
+                <th scope="col">Confidence</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>

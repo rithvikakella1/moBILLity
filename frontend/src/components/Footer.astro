@@ -1,0 +1,83 @@
+---
+/**
+ * The application footer. Previously duplicated in app.html and index.html.
+ *
+ * Note the logo accent uses --teal rather than --teal-text: on the navy ground
+ * the bright teal measures 7.8:1, while the dark text variant would drop to
+ * 3.4:1 and fail AA.
+ */
+export interface Props {
+  /** Renders the fuller marketing footer with link columns. */
+  full?: boolean;
+}
+
+const { full = false } = Astro.props;
+const year = new Date().getFullYear();
+---
+
+<footer>
+  <a class="footer-logo" href="/">mo<span>BILL</span>ity</a>
+  {
+    full && (
+      <nav class="footer-links" aria-label="Footer">
+        <a href="/#features">Features</a>
+        <a href="/#how">How it works</a>
+        <a href="/#compliance">Compliance</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/login">Sign in</a>
+      </nav>
+    )
+  }
+  <small>© {year} moBILLity</small>
+</footer>
+
+<style>
+  footer {
+    background: var(--navy);
+    color: rgba(255, 255, 255, 0.45);
+    padding: 2.5rem 6%;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .footer-logo {
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    color: var(--white);
+    text-decoration: none;
+  }
+  .footer-logo span {
+    color: var(--teal);
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1.4rem;
+    flex-wrap: wrap;
+  }
+  .footer-links a {
+    color: rgba(255, 255, 255, 0.6);
+    text-decoration: none;
+    font-size: 0.88rem;
+  }
+  .footer-links a:hover {
+    color: var(--teal);
+  }
+
+  small {
+    margin-left: auto;
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 700px) {
+    footer {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    small {
+      margin-left: 0;
+    }
+  }
+</style>

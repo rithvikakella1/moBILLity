@@ -1,0 +1,73 @@
+---
+import Auth from "../layouts/Auth.astro";
+---
+
+<Auth
+  title="Create account · moBILLity"
+  heading="Create account"
+  intro="Create an account and verify your email to get started."
+>
+  <a class="google" href="/auth/google" id="googleBtn" hidden><span class="google-mark">G</span> Continue with Google</a>
+  <div class="divider" id="googleDivider" hidden>or sign up with email</div>
+  <form id="form" class="auth-form">
+    <label for="name">Full name</label>
+    <input class="input" id="name" autocomplete="name" maxlength="120" />
+    <label for="email">Email</label>
+    <input class="input" id="email" type="email" autocomplete="email" required />
+    <label for="password">Password</label>
+    <input
+      class="input"
+      id="password"
+      type="password"
+      autocomplete="new-password"
+      minlength="12"
+      maxlength="128"
+      required
+    />
+    <p class="requirements">Use 12–128 characters. A long, unique passphrase is best.</p>
+    <label for="confirm">Confirm password</label>
+    <input class="input" id="confirm" type="password" autocomplete="new-password" required />
+    <button class="button" id="submit" type="submit">Create account</button>
+  </form>
+  <p slot="footer">Already have an account? <a class="link" href="/login">Sign in</a></p>
+</Auth>
+
+<script>
+  import { showAlert, payload, onSubmit } from "../lib/forms.js";
+
+  // Only offer Google sign-in when the server has credentials for it. Showing a
+  // button that always fails is worse than not showing one.
+  (async () => {
+    try {
+      const response = await fetch("/health");
+      if (!response.ok) return;
+      const health = await response.json();
+      if (health.integrations?.google_oauth) {
+        document.querySelector("#googleBtn")?.removeAttribute("hidden");
+        document.querySelector("#googleDivider")?.removeAttribute("hidden");
+      }
+    } catch {
+      // Leave it hidden; email sign-in still works.
+    }
+  })();
+
+  onSubmit("#form", async (form) => {
+    const password = (document.querySelector("#password") as HTMLInputElement).value;
+    if (password !== (document.querySelector("#confirm") as HTMLInputElement).value) {
+      throw new Error("Passwords do not match.");
+    }
+    const response = await fetch("/api/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        full_name: (document.querySelector("#name") as HTMLInputElement).value.trim(),
+        email: (document.querySelector("#email") as HTMLInputElement).value.trim(),
+        password,
+      }),
+    });
+    const data = await payload(response);
+    if (!response.ok) throw new Error(data.detail || "Could not create account.");
+    showAlert(data.message, "success");
+    (form as HTMLFormElement).reset();
+  });
+</script>

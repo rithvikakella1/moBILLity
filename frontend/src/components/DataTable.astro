@@ -1,0 +1,35 @@
+---
+/**
+ * A titled panel wrapping a scrollable table.
+ *
+ * The workflow hub repeated this markup five times with hand-written <thead>
+ * rows, most of which lacked scope attributes.
+ */
+export interface Props {
+  title: string;
+  sub?: string;
+  /** Accessible caption, read by screen readers but not shown. */
+  caption: string;
+  columns: string[];
+  /** id applied to <tbody>, for the client script to render into. */
+  bodyId: string;
+}
+
+const { title, sub, caption, columns, bodyId } = Astro.props;
+---
+
+<section class="panel">
+  <h2>{title}</h2>
+  {sub && <p class="sub">{sub}</p>}
+  <div class="table-wrap">
+    <table>
+      <caption class="visually-hidden">{caption}</caption>
+      <thead>
+        <tr>
+          {columns.map((column) => <th scope="col">{column}</th>)}
+        </tr>
+      </thead>
+      <tbody id={bodyId}></tbody>
+    </table>
+  </div>
+</section>

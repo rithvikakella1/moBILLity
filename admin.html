@@ -6,13 +6,13 @@
   <title>Admin Analytics · moBILLity</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root{--navy:#0a1628;--teal:#00bfa6;--cream:#f5f2ec;--muted:#667085;--line:#e6e3dc;--white:#fff;--red:#b42318}
+    :root{--navy:#0a1628;--teal:#00bfa6;--teal-text:#04796b;--cream:#f5f2ec;--muted:#596579;--line:#e6e3dc;--white:#fff;--red:#b42318}
     *{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--navy);font-family:"DM Sans",sans-serif}
     header{display:flex;justify-content:space-between;align-items:center;padding:20px 5%;background:rgba(245,242,236,.94);border-bottom:1px solid var(--line)}
-    .logo{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}.logo span{color:var(--teal)}
+    .logo{font:24px "DM Serif Display";color:var(--navy);text-decoration:none}.logo span{color:var(--teal-text)}
     nav{display:flex;gap:18px;align-items:center}nav a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px}
     main{max-width:1200px;margin:auto;padding:42px 24px 70px}
-    h1{font:44px/1.05 "DM Serif Display";margin:0 0 8px}h1 em{color:var(--teal);font-style:normal}
+    h1{font:44px/1.05 "DM Serif Display";margin:0 0 8px}h1 em{color:var(--teal-text);font-style:normal}
     .intro{color:var(--muted);margin:0 0 28px}.notice{padding:13px 16px;background:#e8f8f5;border:1px solid #b7e8df;border-radius:12px;font-size:13px;margin-bottom:24px}
     .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:var(--white);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 5px 22px rgba(10,22,40,.05)}
     .label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em}.number{font:35px "DM Serif Display";margin-top:8px}
@@ -22,7 +22,23 @@
     .table-card{margin-top:18px;overflow:hidden}.table-head{padding:20px 20px 0}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:13px 16px;border-top:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}td.name{font-weight:600}small{display:block;color:var(--muted);font-weight:400;margin-top:2px}.pill{padding:4px 8px;border-radius:99px;background:#e8f8f5;color:#087768;font-weight:700;font-size:11px}.off{background:#f2f4f7;color:#667085}
     .empty,.error{color:var(--muted);padding:30px;text-align:center}.error{color:var(--red)}
     @media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}h1{font-size:36px}}@media(max-width:480px){.stats{grid-template-columns:1fr}}
-  </style>
+  
+    /* Keyboard focus must always be visible. :focus-visible shows the ring for
+       keyboard users without adding one on mouse click. */
+    :focus-visible {
+      outline: 3px solid var(--teal-text, #04796b);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+</style>
 </head>
 <body>
   <header><a class="logo" href="/">mo<span>BILL</span>ity</a><nav><a href="/app">Coding tool</a><a href="/privacy">Privacy</a></nav></header>
@@ -40,25 +56,6 @@
       <div class="scroll"><table><thead><tr><th>User</th><th>Registered</th><th>Status</th><th>Tracked actions</th><th>Analyses</th><th>Last active</th></tr></thead><tbody id="users"></tbody></table></div>
     </section>
   </main>
-  <script>
-    const fmt = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)) : '—';
-    const esc = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    async function load(){
-      const response=await fetch('/api/admin/analytics');
-      if(response.status===401){location.href='/login';return}
-      if(!response.ok)throw new Error(response.status===403?'This account is not an administrator.':'Analytics could not be loaded.');
-      const data=await response.json(), t=data.totals;
-      document.querySelector('#notice').textContent=`Events are retained for ${data.retention_days} days. Clinical text, codes, IP addresses, location, and device fingerprints are never collected by this analytics system.`;
-      document.querySelector('#stats').innerHTML=[
-        ['Registered users',t.registered_users],['Verified users',t.verified_users],
-        ['Active users',t.active_users],['Tracked actions',t.total_events]
-      ].map(([l,n])=>`<div class="card"><div class="label">${l}</div><div class="number">${n}</div></div>`).join('');
-      const max=Math.max(1,...data.daily.map(d=>d.events));
-      document.querySelector('#chart').innerHTML=data.daily.map(d=>`<div class="bar" style="height:${Math.max(2,d.events/max*100)}%"><span>${esc(d.day)} · ${d.events} actions · ${d.registrations} registrations</span></div>`).join('');
-      document.querySelector('#events').innerHTML=data.top_events.length?data.top_events.map(e=>`<div class="event"><span>${esc(e.event_name.replaceAll('_',' '))}<small>${esc(e.page)}</small></span><b>${e.count}</b></div>`).join(''):'<div class="empty">No activity yet.</div>';
-      document.querySelector('#users').innerHTML=data.users.map(u=>`<tr><td class="name">${esc(u.full_name||'Unnamed user')}<small>${esc(u.email)}</small></td><td>${fmt(u.created_at)}</td><td><span class="pill ${u.analytics_enabled?'':'off'}">${u.analytics_enabled?'Analytics on':'Opted out'}</span></td><td>${u.event_count}</td><td>${u.analyses||0}</td><td>${fmt(u.last_active_at)}</td></tr>`).join('');
-    }
-    load().catch(error=>document.querySelector('main').innerHTML=`<div class="card error">${esc(error.message)}</div>`);
-  </script>
+  <script src="/static/admin.js" defer></script>
 </body>
 </html>

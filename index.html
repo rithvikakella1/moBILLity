@@ -9,7 +9,7 @@
     :root {
       --navy: #0a1628;
       --navy-mid: #0f2040;
-      --teal: #00c2a8;
+      --teal: #00c2a8;--teal-text:#04796b;
       --teal-light: #00e5c7;
       --blue-accent: #3b82f6;
       --cream: #f5f2ec;
@@ -133,7 +133,7 @@ nav {
       padding: 0.4rem 1rem;
       font-size: 0.8rem;
       font-weight: 600;
-      color: var(--teal);
+      color: var(--teal-text);
       margin-bottom: 2rem;
       box-shadow: 0 2px 12px rgba(0,194,168,0.1);
       animation: fadeUp 0.7s ease both;
@@ -164,7 +164,7 @@ nav {
 
     .hero h1 em {
       font-style: italic;
-      color: var(--teal);
+      color: var(--teal-text);
     }
 
     .hero p {
@@ -341,7 +341,7 @@ nav {
     .ai-status-text {
       font-size: 0.72rem;
       font-weight: 600;
-      color: var(--teal);
+      color: var(--teal-text);
       white-space: nowrap;
       min-width: 70px;
       text-align: right;
@@ -377,7 +377,7 @@ nav {
     }
     .chip-type {
       font-size: 0.62rem;
-      color: var(--teal);
+      color: var(--teal-text);
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -390,7 +390,7 @@ nav {
       gap: 0.35rem;
       font-size: 0.7rem;
       font-weight: 600;
-      color: var(--teal);
+      color: var(--teal-text);
       background: rgba(0,194,168,0.08);
       border: 1px solid rgba(0,194,168,0.2);
       border-radius: 50px;
@@ -403,7 +403,7 @@ nav {
       align-items: center;
       gap: 0.4rem;
       font-size: 0.78rem;
-      color: var(--teal);
+      color: var(--teal-text);
       font-weight: 600;
     }
     .ai-dot {
@@ -427,7 +427,7 @@ nav {
     .stat-num {
       font-family: 'DM Serif Display', serif;
       font-size: 3rem;
-      color: var(--teal);
+      color: var(--teal-text);
       line-height: 1;
       margin-bottom: 0.4rem;
     }
@@ -449,7 +449,7 @@ nav {
       font-weight: 700;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      color: var(--teal);
+      color: var(--teal-text);
       margin-bottom: 1rem;
     }
 
@@ -776,7 +776,7 @@ nav {
     }
     .chip-type {
       font-size: 0.62rem;
-      color: var(--teal);
+      color: var(--teal-text);
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -795,7 +795,7 @@ nav {
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .chip-badge.priority-primary   { background: rgba(0,194,168,0.22); color: var(--teal); }
+    .chip-badge.priority-primary   { background: rgba(0,194,168,0.22); color: var(--teal-text); }
     .chip-badge.priority-secondary { background: rgba(59,130,246,0.18); color: #3b82f6; }
     .chip-badge.priority-procedural{ background: rgba(245,158,11,0.18); color: #d97706; }
     .chip-badge.priority-supplemental{ background: rgba(148,163,184,0.2); color: #94a3b8; }
@@ -894,7 +894,23 @@ nav {
       footer nav a:first-child { margin-left: 0; }
       .calling-layout { grid-template-columns: 1fr; gap: 2.5rem; }
     }
-  </style>
+  
+    /* Keyboard focus must always be visible. :focus-visible shows the ring for
+       keyboard users without adding one on mouse click. */
+    :focus-visible {
+      outline: 3px solid var(--teal-text, #04796b);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+</style>
 </head>
 <body>
 
@@ -1002,8 +1018,8 @@ nav {
   <!-- STATS -->
   <div class="stats">
     <div class="stat-item">
-      <div class="stat-num">95%</div>
-      <div class="stat-label">Code accuracy rate</div>
+      <div class="stat-num">3</div>
+      <div class="stat-label">Code sets: ICD-10, CPT, HCPCS</div>
     </div>
     <div class="stat-item">
       <div class="stat-num">~10s</div>
@@ -1014,8 +1030,8 @@ nav {
       <div class="stat-label">ICD-10 codes supported</div>
     </div>
     <div class="stat-item">
-      <div class="stat-num">100%</div>
-      <div class="stat-label">HIPAA compliant</div>
+      <div class="stat-num">AES-256</div>
+      <div class="stat-label">Patient data encryption</div>
     </div>
   </div>
 
@@ -1081,15 +1097,15 @@ nav {
         <div class="feature-icon">
           <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
-        <h3>Compliance Guardrails</h3>
-        <p>Built-in payer rules and NCCI edits flag potentially unbillable code combinations before submission.</p>
+        <h3>Documentation Guardrails</h3>
+        <p>Codes below the confidence threshold are held back as suggestions with the specific documentation needed to confirm them.</p>
       </div>
       <div class="feature-card reveal">
         <div class="feature-icon">
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </div>
-        <h3>Real-Time Processing</h3>
-        <p>Results appear in under 3 seconds — fast enough to keep pace with a busy clinical workflow.</p>
+        <h3>Fast Enough to Use Live</h3>
+        <p>Most notes return in about ten seconds — quick enough to review codes while the encounter is still open.</p>
       </div>
       <div class="feature-card reveal">
         <div class="feature-icon">
@@ -1113,28 +1129,28 @@ nav {
     <div class="reveal">
       <span class="section-tag" style="color:var(--teal);">Built for Healthcare</span>
       <h2 class="section-title">Security & compliance, by design</h2>
-      <p class="section-sub">moBILLity was built from the ground up to meet the security standards healthcare demands.</p>
+      <p class="section-sub">moBILLity is built around the security controls healthcare workflows demand — and we describe exactly where we are on the path.</p>
     </div>
     <div class="compliance-grid">
       <div class="compliance-card reveal">
         <div class="compliance-badge">🔒</div>
-        <h3>HIPAA Compliant</h3>
-        <p>All PHI is encrypted at rest and in transit. BAAs available upon request.</p>
+        <h3>Built to HIPAA Safeguards</h3>
+        <p>AES-256 field encryption for patient data, TLS in transit, verified accounts, and full session revocation.</p>
       </div>
       <div class="compliance-card reveal">
         <div class="compliance-badge">🛡️</div>
-        <h3>SOC 2 Type II</h3>
-        <p>Independently audited for security, availability, and confidentiality.</p>
+        <h3>Audit-Ready Architecture</h3>
+        <p>Least-privilege access, structured logging, and encrypted storage. SOC 2 assessment not yet started.</p>
       </div>
       <div class="compliance-card reveal">
         <div class="compliance-badge">🌐</div>
-        <h3>Zero Data Retention</h3>
-        <p>Clinical notes are never stored or used for model training. Your data is yours.</p>
+        <h3>Consent-Aware by Default</h3>
+        <p>Per-channel patient consent is required before any reminder is sent. Preview mode ships as the default.</p>
       </div>
       <div class="compliance-card reveal">
         <div class="compliance-badge">✅</div>
-        <h3>ADA Accessible</h3>
-        <p>WCAG 2.1 AA compliant. Built to work for every member of your team.</p>
+        <h3>Accessible Design</h3>
+        <p>Built for keyboard navigation and screen-reader use across every workflow.</p>
       </div>
     </div>
   </section>
