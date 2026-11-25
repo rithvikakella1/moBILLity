@@ -866,11 +866,13 @@ def _serve(filename: str) -> str:
         return f.read()
 
 
+@app.get("/index.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/", response_class=HTMLResponse)
 async def serve_landing():
     return _serve("index.html")
 
 
+@app.get("/app.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/app", response_class=HTMLResponse)
 async def serve_app():
     return _serve("app.html")
@@ -879,6 +881,7 @@ async def serve_app():
 async def serve_admin(admin_user=Depends(get_admin_user)):
     return _serve("admin.html")
 
+@app.get("/privacy.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/privacy", response_class=HTMLResponse)
 async def serve_privacy():
     return (
@@ -888,6 +891,7 @@ async def serve_privacy():
     )
 
 
+@app.get("/patient.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/patient", response_class=HTMLResponse)
 async def serve_patient_preview():
     # This is an explicitly fictional, client-only preview. No patient records
@@ -895,28 +899,34 @@ async def serve_patient_preview():
     return _serve("patient.html")
 
 
+@app.get("/workflows.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/workflows", response_class=HTMLResponse)
 async def serve_workflows():
     return _serve("workflows.html")
 
 
+@app.get("/login.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/login", response_class=HTMLResponse)
 async def serve_login():
     return _serve("login.html")
 
 
+@app.get("/signup.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/signup", response_class=HTMLResponse)
 async def serve_signup():
     return _serve("signup.html")
 
+@app.get("/forgot-password.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/forgot-password", response_class=HTMLResponse)
 async def serve_forgot_password():
     return _serve("forgot-password.html")
 
+@app.get("/reset-password.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/reset-password", response_class=HTMLResponse)
 async def serve_reset_password():
     return _serve("reset-password.html")
 
+@app.get("/verify-email.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/verify-email", response_class=HTMLResponse)
 async def serve_verify_email():
     return _serve("verify-email.html")

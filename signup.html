@@ -15,10 +15,10 @@
       <p class="requirements">Use 12–128 characters. A long, unique passphrase is best.</p>
       <label for="confirm">Confirm password</label><input class="input" id="confirm" type="password" autocomplete="new-password" required>
       <button class="button" id="submit" type="submit">Create account</button>
-      <p style="font-size:.75rem;line-height:1.45;margin-top:1rem;color:#667085">By creating an account, you acknowledge our <a href="/privacy">privacy notice</a>, including limited first-party usage analytics that you can turn off.</p>
+      <p style="font-size:.75rem;line-height:1.45;margin-top:1rem;color:#667085">By creating an account, you acknowledge our <a href="/privacy.html">privacy notice</a>, including limited first-party usage analytics that you can turn off.</p>
     </form>
   </section>
-  <p class="footer">Already registered? <a class="link" href="/login">Sign in</a></p>
+  <p class="footer">Already registered? <a class="link" href="/login.html">Sign in</a></p>
 </main><script>
 const alertBox=document.querySelector('#alert'),button=document.querySelector('#submit');function show(m,t='error'){alertBox.textContent=m;alertBox.className=`alert show ${t}`}async function payload(r){const t=await r.text();try{return JSON.parse(t)}catch{return{detail:r.ok?'Unexpected server response.':'The server could not complete the request. Please try again.'}}}
 document.querySelector('#form').addEventListener('submit',async e=>{e.preventDefault();alertBox.className='alert';const password=document.querySelector('#password').value;if(password!==document.querySelector('#confirm').value)return show('Passwords do not match.');button.disabled=true;
