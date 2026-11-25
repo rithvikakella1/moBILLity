@@ -1,0 +1,5 @@
+body[data-auth-state="checking"] > :not(#authLoading):not(script):not(noscript){display:none!important}
+#authLoading{padding:5rem 2rem;text-align:center;font:1rem/1.6 'DM Sans',sans-serif;color:#667085}
+body[data-auth-state="ready"] #authLoading{display:none}
+html.embedded-demo body>nav,html.embedded-demo body>footer{display:none!important}
+html.embedded-demo main{padding-top:28px}

@@ -7,8 +7,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="static/patient-portal.css?v=2">
+  <link rel="stylesheet" href="static/demo-access.css">
 </head>
-<body>
+<body data-auth-state="checking">
+  <p id="authLoading" role="status">Checking secure access…</p>
+  <noscript>Enable JavaScript and sign in to access this demo.</noscript>
 <a href="#content" class="skip">Skip to your care</a>
 <aside id="patientSidebar" class="sidebar" aria-label="Patient navigation">
   <a class="brand" href="patient.html">mo<span>BILL</span>ity<small>YOUR CARE COMPANION</small></a>
@@ -24,6 +27,7 @@
 </div>
 <dialog id="portalDialog" aria-labelledby="dialogTitle"><div class="dialog-top"><span class="eyebrow" id="dialogEyebrow">YOUR CARE</span><button class="icon-button" id="closeDialog" aria-label="Close dialog">×</button></div><h2 id="dialogTitle"></h2><div id="dialogContent"></div></dialog>
 <div class="portal-toast" id="portalToast" role="status" aria-live="polite" hidden></div>
-<script src="static/patient-portal.js?v=5"></script>
+<script src="static/demo-access.js"></script>
+<script src="static/patient-portal.js?v=6"></script>
 </body>
 </html>

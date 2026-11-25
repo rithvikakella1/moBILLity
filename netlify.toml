@@ -1,3 +1,5 @@
+"$schema" = "https://open-api.netlify.com/netlify.schema.json"
+
 [[redirects]]
   from = "/api/*"
   to = "https://mobillity-api.onrender.com/api/:splat"
@@ -7,5 +9,61 @@
 [[redirects]]
   from = "/auth/*"
   to = "https://mobillity-api.onrender.com/auth/:splat"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/demo"
+  to = "https://mobillity-api.onrender.com/demo"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/demo.html"
+  to = "https://mobillity-api.onrender.com/demo.html"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/app"
+  to = "https://mobillity-api.onrender.com/app"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/app.html"
+  to = "https://mobillity-api.onrender.com/app.html"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/workflows"
+  to = "https://mobillity-api.onrender.com/workflows"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/workflows.html"
+  to = "https://mobillity-api.onrender.com/workflows.html"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/patient"
+  to = "https://mobillity-api.onrender.com/patient"
+  status = 200
+  force = true
+
+# Demo HTML is served only after the backend session check.
+[[redirects]]
+  from = "/patient.html"
+  to = "https://mobillity-api.onrender.com/patient.html"
   status = 200
   force = true

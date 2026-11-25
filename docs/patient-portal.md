@@ -3,8 +3,10 @@
 The patient experience lives at `/patient.html` (static hosting) or `/patient`
 (FastAPI). The clinician Workflow Hub links to the preview. All sample records
 are fictional and held in client memory. Reloading discards changes. There are no
-patient-data API calls, message sends, real scheduling actions, payments, or
-caregiver permission changes in this implementation.
+clinical patient-data API calls, message sends, real scheduling actions, payments, or
+caregiver permission changes in this implementation. The shared demo gate verifies
+the signed-in session through `/api/me`; the demo workspace also supports sign-out.
+All demos require login and are available as tabs inside `/demo.html`.
 
 ## Implemented experience
 

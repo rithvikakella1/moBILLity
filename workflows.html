@@ -29,8 +29,11 @@
     @media(max-width:850px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}nav .nav-link{display:none}}@media(max-width:480px){.stats{grid-template-columns:1fr}.row2{grid-template-columns:1fr}}
   </style>
   <link rel="stylesheet" href="static/workflow-calendar.css">
+  <link rel="stylesheet" href="static/demo-access.css">
 </head>
-<body>
+<body data-auth-state="checking">
+  <p id="authLoading" role="status">Checking secure access…</p>
+  <noscript>Enable JavaScript and sign in to access this demo.</noscript>
   <nav>
     <a class="logo" href="index.html">mo<span>BILL</span>ity</a>
     <a class="nav-link active" href="workflows.html">Workflow Hub</a>
@@ -109,14 +112,15 @@
     </div>
   </main>
   <div class="toast" id="toast"></div>
+  <script src="static/demo-access.js"></script>
   <script>
     const $=s=>document.querySelector(s);
     const cookie=name=>decodeURIComponent(document.cookie.split("; ").find(r=>r.startsWith(name+"="))?.split("=")[1]||"");
     const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     const when=value=>new Date(value).toLocaleString([], {dateStyle:"medium",timeStyle:"short"});
     function notify(message,error=false){const t=$("#toast");t.textContent=message;t.className="toast"+(error?" error":"");t.style.display="block";setTimeout(()=>t.style.display="none",3500)}
-    async function api(path,options={}){options.headers={...(options.headers||{}),"X-CSRF-Token":cookie("mobillity_csrf")};if(options.body)options.headers["Content-Type"]="application/json";const r=await fetch(path,options);if(r.status===401){location="/login";throw new Error("Sign in required")}const data=await r.json();if(!r.ok)throw new Error(data.detail||"Request failed");return data}
-    async function logout(){await api("/api/logout",{method:"POST"}).catch(()=>{});location="/login"}
+    async function api(path,options={}){options.headers={...(options.headers||{}),"X-CSRF-Token":cookie("mobillity_csrf")};if(options.body)options.headers["Content-Type"]="application/json";const r=await fetch(path,options);if(r.status===401){window.top.location.href="/login.html?tab=workflow";throw new Error("Sign in required")}const data=await r.json();if(!r.ok)throw new Error(data.detail||"Request failed");return data}
+    async function logout(){await api("/api/logout",{method:"POST"}).catch(()=>{});window.top.location.href="/login.html?tab=workflow"}
     let state={patients:[],appointments:[],reminders:[],events:[]};
     function rows(items,render,cols){return items.length?items.map(render).join(""):`<tr><td colspan="${cols}" class="empty">Nothing here yet.</td></tr>`}
     function render(){
@@ -135,7 +139,7 @@
     $("#patientForm").addEventListener("submit",async e=>{e.preventDefault();try{await api("/api/workflows/patients",{method:"POST",body:JSON.stringify({name:$("#name").value,phone:$("#phone").value||null,email:$("#email").value||null,sms_consent:$("#smsConsent").checked,voice_consent:$("#voiceConsent").checked,email_consent:$("#emailConsent").checked})});e.target.reset();await load();notify("Patient saved") }catch(err){notify(err.message,true)}});
     $("#appointmentForm").addEventListener("submit",async e=>{e.preventDefault();try{const local=new Date($("#startsAt").value);const result=await api("/api/workflows/appointments",{method:"POST",body:JSON.stringify({patient_id:Number($("#patient").value),starts_at:local.toISOString(),clinician:$("#clinician").value,location:$("#location").value})});e.target.reset();await load();notify(`Appointment scheduled; ${result.reminders_created} reminder${result.reminders_created===1?"":"s"} queued`) }catch(err){notify(err.message,true)}});
     window.workflowData={get:()=>state,api,load,notify};
-    (async()=>{if(new URLSearchParams(location.search).has("demo"))return;try{const me=await api("/api/me");$("#username").textContent=me.full_name||me.email;await load()}catch(err){notify(err.message,true)}})();
+    (async()=>{const me=await window.demoAccess;if(!me)return;if(new URLSearchParams(location.search).has("demo"))return;try{$("#username").textContent=me.full_name||me.email;await load()}catch(err){notify(err.message,true)}})();
   </script>
   <script src="static/workflow-calendar.js"></script>
 </body>

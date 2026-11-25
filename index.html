@@ -908,15 +908,7 @@ nav {
       <li><a href="#calling">AI Calling</a></li>
       <li><a href="#compliance">Compliance</a></li>
     </ul>
-    <div class="demo-dropdown" id="demoDropdown">
-      <button class="demo-trigger" id="demoTrigger" type="button" aria-expanded="false" aria-controls="demoMenu">Launch Demo <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
-      <div class="demo-menu" id="demoMenu" aria-label="Choose a demo" hidden>
-        <span class="demo-menu-label">EXPLORE moBILLity</span>
-        <a href="app.html?demo=1"><span class="demo-menu-icon" aria-hidden="true">&lt;/&gt;</span><span><strong>Medical Coder</strong><small>Explore AI-powered medical coding</small></span></a>
-        <a href="workflows.html?demo=1"><span class="demo-menu-icon" aria-hidden="true">▦</span><span><strong>Workflow Hub</strong><small>Appointments, calendars, and no-shows</small></span></a>
-        <a href="patient.html"><span class="demo-menu-icon" aria-hidden="true">♡</span><span><strong>Patient Portal</strong><small>A patient’s care, all in one place</small></span></a>
-      </div>
-    </div>
+    <a class="demo-trigger" href="login.html?tab=coder">Launch Demo</a>
   </nav>
 
   <!-- HERO -->
@@ -926,7 +918,7 @@ nav {
     <h1>Medical coding,<br/><em>reimagined</em> with AI.</h1>
     <p>Automatically extract accurate ICD-10 and CPT codes from clinical notes in seconds. Built for clinicians, billers, and healthcare teams.</p>
     <div class="hero-actions">
-      <button type="button" class="btn-primary hero-demo-launch" data-demo-launch>Launch Demo</button>
+      <a class="btn-primary hero-demo-launch" href="login.html?tab=coder">Launch Demo</a>
       <a href="#how" class="btn-secondary">See how it works</a>
     </div>
 
@@ -1170,7 +1162,6 @@ nav {
     </div>
   </footer>
 
-  <script src="static/demo-menu.js"></script>
   <script>
     // ── SCROLL REVEAL ──
     const reveals = document.querySelectorAll('.reveal');

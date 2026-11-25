@@ -202,6 +202,13 @@
   $('#portalDialog').addEventListener('cancel',stopMedia);
   $('#menuToggle').addEventListener('click',()=>{$('.sidebar').classList.toggle('open');syncNavigation();});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('.sidebar').classList.contains('open')){$('.sidebar').classList.remove('open');syncNavigation();$('#menuToggle').focus();}});
+  window.addEventListener('message',event=>{
+    if(event.origin===location.origin&&event.source===window.parent&&event.data?.type==='mobillity:demo-hidden'){
+      stopMedia();
+      if($('#videoStage'))$('#videoStage').innerHTML='<div><span class="avatar">JD</span><p>Your camera is off</p></div>';
+      if($('#deviceStatus'))$('#deviceStatus').textContent='Device test stopped when you switched demos. No clinician is connected.';
+    }
+  });
   window.addEventListener('pagehide',stopMedia);
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1)||'home';if([...sections.map(s=>s[0]),'support','settings'].includes(view)){state.view=view;render();}});
   state.view=location.hash.slice(1)||'home';if(![...sections.map(s=>s[0]),'support','settings'].includes(state.view))state.view='home';syncNavigation();render();

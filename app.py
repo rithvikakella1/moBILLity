@@ -278,7 +278,11 @@ async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    demo_paths = {"/app", "/app.html", "/workflows", "/workflows.html", "/patient", "/patient.html", "/demo", "/demo.html"}
+    is_demo = request.url.path in demo_paths
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_demo else "DENY"
+    if is_demo:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -872,10 +876,31 @@ async def serve_landing():
     return _serve("index.html")
 
 
+async def _protected_demo_page(request: Request, filename: str, tab: str):
+    try:
+        await get_current_user(request, token=None)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return RedirectResponse(f"/login.html?tab={tab}", status_code=303,
+                                headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_serve(filename), headers={"Cache-Control": "no-store"})
+
+
 @app.get("/app.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/app", response_class=HTMLResponse)
-async def serve_app():
-    return _serve("app.html")
+async def serve_app(request: Request):
+    return await _protected_demo_page(request, "app.html", "coder")
+
+
+@app.get("/demo.html", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/demo", response_class=HTMLResponse)
+async def serve_demo(request: Request):
+    tab = request.query_params.get("tab", "coder")
+    if tab not in ("coder", "workflow", "patient"):
+        tab = "coder"
+    return await _protected_demo_page(request, "demo.html", tab)
+
 
 @app.get("/admin", response_class=HTMLResponse)
 async def serve_admin(admin_user=Depends(get_admin_user)):
@@ -893,16 +918,14 @@ async def serve_privacy():
 
 @app.get("/patient.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/patient", response_class=HTMLResponse)
-async def serve_patient_preview():
-    # This is an explicitly fictional, client-only preview. No patient records
-    # are served until patient identity and record authorization are integrated.
-    return _serve("patient.html")
+async def serve_patient_preview(request: Request):
+    return await _protected_demo_page(request, "patient.html", "patient")
 
 
 @app.get("/workflows.html", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/workflows", response_class=HTMLResponse)
-async def serve_workflows():
-    return _serve("workflows.html")
+async def serve_workflows(request: Request):
+    return await _protected_demo_page(request, "workflows.html", "workflow")
 
 
 @app.get("/login.html", response_class=HTMLResponse, include_in_schema=False)
@@ -1068,6 +1091,8 @@ async def reset_password(request: Request, body: ResetPasswordInput):
 async def google_login(request: Request):
     if not getattr(oauth, "google", None):
         raise HTTPException(status_code=503, detail="Google sign-in is not configured.")
+    tab = request.query_params.get("tab", "coder")
+    request.session["demo_tab"] = tab if tab in ("coder", "workflow", "patient") else "coder"
     redirect_uri = f"{APP_BASE_URL}/auth/google/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -1104,7 +1129,10 @@ async def google_callback(request: Request):
             )
             user_id = cursor.fetchone()["id"] if USING_POSTGRES else cursor.lastrowid
             user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    response = RedirectResponse("/app", status_code=303)
+    tab = request.session.pop("demo_tab", "coder")
+    if tab not in ("coder", "workflow", "patient"):
+        tab = "coder"
+    response = RedirectResponse(f"/demo.html?tab={tab}", status_code=303)
     _set_auth_cookies(response, user)
     return response
 

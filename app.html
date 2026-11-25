@@ -679,6 +679,7 @@
     #authLoading { padding: 5rem 2rem; text-align: center; font: 1rem 'DM Sans', sans-serif; color: #667085; }
     body[data-auth-state="ready"] #authLoading { display: none; }
   </style>
+  <link rel="stylesheet" href="static/demo-access.css">
 </head>
 <body data-auth-state="checking">
   <p id="authLoading" role="status">Checking secure access…</p>
@@ -761,6 +762,7 @@
     <a class="footer-logo" href="/">mo<span>BILL</span>ity</a>
   </footer>
 
+  <script src="static/demo-access.js"></script>
   <script>
     // ── AUTH GUARD ────────────────────────────────────────────────────────────
     const API_BASE = window.location.origin;
@@ -790,24 +792,18 @@
     }
 
     (async function guardPage() {
-      try {
-        const response = await fetch('/api/me');
-        if (!response.ok) throw new Error();
-        const user = await response.json();
-        document.body.dataset.authState = "ready";
-        const el = document.getElementById('navUsername');
-        if (el) el.textContent = user.full_name || user.email;
-        if (user.is_admin) {
-          const link = document.createElement('a');
-          link.href = '/admin';
-          link.textContent = 'Analytics';
-          link.style.cssText = 'font-size:.82rem;color:var(--teal);font-weight:600;text-decoration:none';
-          document.querySelector('.nav-user')?.prepend(link);
-        }
-        if (user.analytics_enabled) track('page_view');
-      } catch {
-        window.location.replace('/login.html');
+      const user = await window.demoAccess;
+      if (!user) return;
+      const el = document.getElementById('navUsername');
+      if (el) el.textContent = user.full_name || user.email;
+      if (user.is_admin) {
+        const link = document.createElement('a');
+        link.href = '/admin';
+        link.textContent = 'Analytics';
+        link.style.cssText = 'font-size:.82rem;color:var(--teal);font-weight:600;text-decoration:none';
+        document.querySelector('.nav-user')?.prepend(link);
       }
+      if (user.analytics_enabled) track('page_view');
     })();
 
     // ── SPEECH TO TEXT ────────────────────────────────────────────────────────
