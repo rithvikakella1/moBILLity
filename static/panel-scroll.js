@@ -5,7 +5,7 @@
   const demo = document.createElement('section');
   demo.className = 'demo-panel';
   demo.id = 'demo';
-  demo.innerHTML = '<div class="demo-intro"><span class="section-tag">Clinical intelligence, in action</span><h2 class="section-title">From clinical context.<br>To clear codes.</h2><p class="section-sub">See how moBILLity turns a clinical note into ICD-10 and CPT codes, with confidence scores and suggestions for review.</p><span class="demo-caption">ILLUSTRATIVE EXTRACTION DEMO</span></div>';
+  demo.innerHTML = '<div class="demo-intro"><span class="section-tag">Less time on coding</span><h2 class="section-title">Clinical notes.<br>A clearer starting point.</h2><p class="section-sub">One part of a more connected workflow: turn clinical notes into ICD-10 and CPT suggestions, with confidence scores to guide your team’s review.</p><span class="demo-caption">ILLUSTRATIVE EXTRACTION DEMO</span></div>';
   demo.append(document.querySelector('.hero-card'));
   hero.after(demo);
   document.querySelector('.scroll-cue')?.remove();
@@ -26,7 +26,7 @@
     stage.append(frame);
     return { frame, element, start: 0, overflow: 0, hold: 0, transition: 0 };
   });
-  const labels = ['Introduction', 'Live demo', 'AI Calling', 'At a glance', 'How it works', 'Features', 'Compliance', 'Let’s talk'];
+  const labels = ['Introduction', 'Live demo', 'AI Calling', 'Our focus', 'Connected care', 'The platform', 'Our approach', 'Let’s talk'];
   const status = document.createElement('div');
   status.className = 'panel-status';
   status.innerHTML = '<span class="panel-status-label"></span><span>SCROLL TO EXPLORE ↓</span>';

@@ -135,3 +135,7 @@ body { background: var(--navy); }
 .pinned-panels .panel-frame { background: transparent; mix-blend-mode: plus-lighter; transition: none; }
 .pinned-panels .panel-frame > section, .pinned-panels .panel-frame > .stats { background: transparent; }
 .pinned-panels .hero-bg, .pinned-panels .hero::before { display: none; }
+
+/* Keep the care-delivery story readable within the existing panel timeline. */
+.stats .stat-num { font-size: clamp(1.7rem, 3vw, 2.7rem); line-height: 1.12; }
+.platform-preview-note { max-width: 760px; margin-top: 1.5rem; color: var(--panel-copy); font-size: .8rem; line-height: 1.6; }
