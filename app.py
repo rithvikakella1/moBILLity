@@ -188,6 +188,12 @@ def _init_db() -> None:
                 FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE
             )
         """)
+        if USING_POSTGRES:
+            db.execute("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS no_show INTEGER NOT NULL DEFAULT 0")
+        else:
+            appointment_columns = {row["name"] for row in db.execute("PRAGMA table_info(appointments)")}
+            if "no_show" not in appointment_columns:
+                db.execute("ALTER TABLE appointments ADD COLUMN no_show INTEGER NOT NULL DEFAULT 0")
         db.execute(f"""
             CREATE TABLE IF NOT EXISTS reminder_jobs (
                 id {id_definition},
@@ -704,6 +710,7 @@ def _appointment_json(row) -> dict:
         "clinician": row["clinician"],
         "location": row["location"],
         "status": row["status"],
+        "no_show": bool(row["no_show"]),
     }
     if "name_encrypted" in row.keys():
         result["patient_name"] = _decrypt_optional(row["name_encrypted"])
@@ -821,7 +828,7 @@ def dispatch_due_reminders(now: Optional[datetime] = None, limit: int = 50) -> d
             if not claimed:
                 continue
             appointment = _appointment_row(db, job["appointment_id"], job["owner_user_id"])
-            if not appointment or appointment["status"] not in ("scheduled", "confirmed"):
+            if not appointment or appointment["no_show"] or appointment["status"] not in ("scheduled", "confirmed"):
                 db.execute("UPDATE reminder_jobs SET status = 'cancelled' WHERE id = ?", (job["id"],))
                 continue
             try:
@@ -1117,6 +1124,10 @@ class AppointmentInput(BaseModel):
     location: str = ""
 
 
+class AppointmentAttendanceInput(BaseModel):
+    no_show: bool
+
+
 class AppointmentStatusInput(BaseModel):
     status: Literal["scheduled", "confirmed", "cancelled", "completed"]
 
@@ -1258,7 +1269,7 @@ async def update_appointment_status(
     _authenticated_write(request)
     with _db() as db:
         updated = db.execute(
-            "UPDATE appointments SET status = ? WHERE id = ? AND owner_user_id = ?",
+            "UPDATE appointments SET status = ?, no_show = 0 WHERE id = ? AND owner_user_id = ?",
             (body.status, appointment_id, current_user["id"]),
         ).rowcount
         if not updated:
@@ -1269,6 +1280,27 @@ async def update_appointment_status(
                    WHERE appointment_id = ? AND status IN ('pending', 'processing')""",
                 (appointment_id,),
             )
+        appointment = _appointment_row(db, appointment_id, current_user["id"])
+    return _appointment_json(appointment)
+
+
+@app.patch("/api/workflows/appointments/{appointment_id}/attendance")
+async def update_appointment_attendance(
+    appointment_id: int, request: Request, body: AppointmentAttendanceInput,
+    current_user=Depends(get_current_user),
+):
+    _authenticated_write(request)
+    with _db() as db:
+        appointment = _appointment_row(db, appointment_id, current_user["id"])
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found.")
+        if body.no_show and (datetime.fromisoformat(appointment["starts_at"]) > _utcnow()
+                             or appointment["status"] not in ("scheduled", "confirmed")):
+            raise HTTPException(status_code=400, detail="Only an elapsed, active appointment can be marked as a no-show.")
+        db.execute("UPDATE appointments SET no_show = ? WHERE id = ? AND owner_user_id = ?",
+                   (int(body.no_show), appointment_id, current_user["id"]))
+        if body.no_show:
+            db.execute("UPDATE reminder_jobs SET status = 'cancelled' WHERE appointment_id = ? AND status IN ('pending', 'processing')", (appointment_id,))
         appointment = _appointment_row(db, appointment_id, current_user["id"])
     return _appointment_json(appointment)
 

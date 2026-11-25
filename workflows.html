@@ -28,6 +28,7 @@
     .callout{display:flex;gap:12px;background:var(--navy2);color:white;border-radius:14px;padding:17px;margin-bottom:18px}.callout b{display:block;margin-bottom:4px}.callout small{color:#bac5d3;line-height:1.4}.phone{font-size:1.4rem}
     @media(max-width:850px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}nav .nav-link{display:none}}@media(max-width:480px){.stats{grid-template-columns:1fr}.row2{grid-template-columns:1fr}}
   </style>
+  <link rel="stylesheet" href="static/workflow-calendar.css">
 </head>
 <body>
   <nav>
@@ -39,14 +40,26 @@
   <main>
     <div class="eyebrow">Clinical operations</div>
     <h1>Workflow <em>Hub</em></h1>
-    <p class="intro">Coordinate patient outreach from one queue. Consented patients receive appointment reminders exactly one week before their visit by text, phone, or email.</p>
+    <p class="intro">Your day, clearly organized. Review patient appointments, track attendance, and coordinate consented outreach in one place.</p>
     <div class="mode"><span class="dot"></span><span id="deliveryMode">Preview delivery</span></div>
     <section class="stats">
       <div class="stat"><strong id="patientCount">0</strong><span>Patients</span></div>
       <div class="stat"><strong id="appointmentCount">0</strong><span>Upcoming appointments</span></div>
       <div class="stat"><strong id="pendingCount">0</strong><span>Reminders queued</span></div>
-      <div class="stat"><strong id="sentCount">0</strong><span>Messages sent</span></div>
+      <div class="stat"><strong id="noShowCount">0</strong><span>No-shows</span></div>
     </section>
+    <section class="calendar panel" aria-label="Patient appointment calendar">
+      <div class="calendar-heading"><div><div class="eyebrow">Your practice, at a glance</div><h2>Patient schedule</h2></div><button type="button" id="newVisit" class="calendar-primary">+ Schedule a visit</button></div>
+      <div class="calendar-toolbar">
+        <div class="date-navigation"><button id="today" type="button">Today</button><button id="previous" type="button" aria-label="Previous calendar period">‹</button><button id="next" type="button" aria-label="Next calendar period">›</button><h3 id="calendarTitle" aria-live="polite"></h3></div>
+        <div class="view-switch" role="group" aria-label="Calendar view"><button data-view="day" aria-pressed="false">Day</button><button data-view="week" aria-pressed="true">Week</button><button data-view="month" aria-pressed="false">Month</button></div>
+      </div>
+      <div class="calendar-filters"><label for="calendarClinician">Clinician<select id="calendarClinician"><option value="">All clinicians</option></select></label><label for="calendarStatus">Attendance<select id="calendarStatus"><option value="all">All appointments</option><option value="no_show">No-shows only</option></select></label><div id="calendarSummary" aria-live="polite"></div></div>
+      <p class="calendar-timezone" id="calendarTimezone"></p>
+      <div id="calendarGrid"></div>
+      <div class="calendar-legend"><span><i class="legend-dot scheduled"></i>Scheduled</span><span><i class="legend-dot confirmed"></i>Confirmed</span><span><i class="legend-dot completed"></i>Completed</span><span><i class="legend-dot no_show"></i>No-show</span><span><i class="legend-dot cancelled"></i>Cancelled</span></div>
+    </section>
+    <dialog id="visitDialog" aria-labelledby="visitTitle"><form method="dialog"><button class="dialog-close" aria-label="Close appointment details">×</button></form><div class="eyebrow">Appointment details</div><h2 id="visitTitle"></h2><div id="visitDetails"></div><div id="visitActions"></div><p id="visitFeedback" role="status"></p></dialog>
     <div class="grid">
       <aside>
         <section class="panel">
@@ -107,19 +120,22 @@
     function rows(items,render,cols){return items.length?items.map(render).join(""):`<tr><td colspan="${cols}" class="empty">Nothing here yet.</td></tr>`}
     function render(){
       $("#patientCount").textContent=state.patients.length;
-      $("#appointmentCount").textContent=state.appointments.filter(a=>["scheduled","confirmed"].includes(a.status)).length;
+      $("#appointmentCount").textContent=state.appointments.filter(a=>["scheduled","confirmed"].includes(a.status)&&!a.no_show&&new Date(a.starts_at)>=new Date()).length;
       $("#pendingCount").textContent=state.reminders.filter(r=>["pending","processing"].includes(r.status)).length;
-      $("#sentCount").textContent=state.reminders.filter(r=>r.status==="sent").length;
+      $("#noShowCount").textContent=state.appointments.filter(a=>a.no_show).length;
       $("#patient").innerHTML='<option value="">Choose a patient</option>'+state.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
-      $("#appointments").innerHTML=rows(state.appointments,a=>`<tr><td>${esc(a.patient_name)}</td><td>${when(a.starts_at)}</td><td>${esc(a.clinician||"—")}</td><td>${esc(a.location||"—")}</td><td><span class="badge ${a.status}">${esc(a.status)}</span></td></tr>`,5);
+      $("#appointments").innerHTML=rows(state.appointments,a=>`<tr><td>${esc(a.patient_name)}</td><td>${when(a.starts_at)}</td><td>${esc(a.clinician||"—")}</td><td>${esc(a.location||"—")}</td><td><span class="badge ${a.no_show?"no_show":a.status}">${a.no_show?"No-show":esc(a.status)}</span></td></tr>`,5);
       $("#reminders").innerHTML=rows(state.reminders,r=>`<tr><td>${esc(r.patient_name)}</td><td>${esc(r.channel)}</td><td>${when(r.scheduled_for)}</td><td>${when(r.starts_at)}</td><td><span title="${esc(r.last_error||"")}" class="badge ${r.status}">${esc(r.status)}</span></td></tr>`,5);
       $("#events").innerHTML=rows(state.events,e=>`<tr><td>${esc(e.patient_name||"Unknown")}</td><td>${esc(e.channel)}</td><td>${esc(e.outcome)}</td><td>${esc(e.detail)}</td><td>${when(e.created_at)}</td></tr>`,5);
+      if(window.renderCalendar)window.renderCalendar();
       $("#deliveryMode").textContent=state.delivery_mode==="preview"?"Preview mode — no messages leave the app":`Live ${state.delivery_mode} delivery`;
     }
     async function load(){state=await api("/api/workflows/overview");render()}
     $("#patientForm").addEventListener("submit",async e=>{e.preventDefault();try{await api("/api/workflows/patients",{method:"POST",body:JSON.stringify({name:$("#name").value,phone:$("#phone").value||null,email:$("#email").value||null,sms_consent:$("#smsConsent").checked,voice_consent:$("#voiceConsent").checked,email_consent:$("#emailConsent").checked})});e.target.reset();await load();notify("Patient saved") }catch(err){notify(err.message,true)}});
     $("#appointmentForm").addEventListener("submit",async e=>{e.preventDefault();try{const local=new Date($("#startsAt").value);const result=await api("/api/workflows/appointments",{method:"POST",body:JSON.stringify({patient_id:Number($("#patient").value),starts_at:local.toISOString(),clinician:$("#clinician").value,location:$("#location").value})});e.target.reset();await load();notify(`Appointment scheduled; ${result.reminders_created} reminder${result.reminders_created===1?"":"s"} queued`) }catch(err){notify(err.message,true)}});
-    (async()=>{try{const me=await api("/api/me");$("#username").textContent=me.full_name||me.email;await load()}catch(err){notify(err.message,true)}})();
+    window.workflowData={get:()=>state,api,load,notify};
+    (async()=>{if(new URLSearchParams(location.search).has("demo"))return;try{const me=await api("/api/me");$("#username").textContent=me.full_name||me.email;await load()}catch(err){notify(err.message,true)}})();
   </script>
+  <script src="static/workflow-calendar.js"></script>
 </body>
 </html>

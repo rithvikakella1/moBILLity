@@ -89,6 +89,39 @@ class WorkflowAutomationTests(unittest.TestCase):
         )
         self.assertEqual(len(final["events"]), 3)
 
+    def test_z_no_show_persists_and_cancels_reminders(self):
+        patient = self.client.post(
+            "/api/workflows/patients", headers=self._headers(),
+            json={"name": "Attendance Test", "email": "attendance@example.com", "email_consent": True},
+        ).json()
+        def visit(days):
+            return self.client.post(
+                "/api/workflows/appointments", headers=self._headers(),
+                json={"patient_id": patient["id"], "starts_at": (workflow_app._utcnow() + timedelta(days=days)).isoformat()},
+            ).json()
+        future = visit(2)
+        rejected = self.client.patch(
+            f"/api/workflows/appointments/{future['id']}/attendance",
+            headers=self._headers(), json={"no_show": True},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        past = visit(-1)
+        url = f"/api/workflows/appointments/{past['id']}/attendance"
+        recorded = self.client.patch(url, headers=self._headers(), json={"no_show": True})
+        self.assertEqual(recorded.status_code, 200)
+        self.assertTrue(recorded.json()["no_show"])
+        overview = self.client.get("/api/workflows/overview").json()
+        saved = next(a for a in overview["appointments"] if a["id"] == past["id"])
+        self.assertTrue(saved["no_show"])
+        jobs = [r for r in overview["reminders"] if r["appointment_id"] == past["id"]]
+        self.assertTrue(jobs)
+        self.assertTrue(all(r["status"] == "cancelled" for r in jobs))
+        cleared = self.client.patch(url, headers=self._headers(), json={"no_show": False})
+        self.assertFalse(cleared.json()["no_show"])
+        self.assertEqual(self.client.patch(
+            "/api/workflows/appointments/999999/attendance", headers=self._headers(), json={"no_show": True},
+        ).status_code, 404)
+
     def test_front_desk_intent_creates_handoff(self):
         response = self.client.post(
             "/webhooks/twilio/inbound-call",
