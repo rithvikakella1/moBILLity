@@ -888,6 +888,13 @@ async def serve_privacy():
     )
 
 
+@app.get("/patient", response_class=HTMLResponse)
+async def serve_patient_preview():
+    # This is an explicitly fictional, client-only preview. No patient records
+    # are served until patient identity and record authorization are integrated.
+    return _serve("patient.html")
+
+
 @app.get("/workflows", response_class=HTMLResponse)
 async def serve_workflows():
     return _serve("workflows.html")
