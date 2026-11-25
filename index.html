@@ -895,12 +895,15 @@ nav {
       .calling-layout { grid-template-columns: 1fr; gap: 2.5rem; }
     }
   </style>
+  <link rel="stylesheet" href="static/website-refresh.css?v=restored-home-1">
   <link rel="stylesheet" href="static/demo-menu.css">
 </head>
 <body>
+  <div class="scroll-progress" aria-hidden="true"></div>
+  <a class="skip-link" href="#how">Skip to content</a>
 
   <!-- NAV -->
-  <nav>
+  <nav aria-label="Main navigation">
     <a class="nav-logo" href="#">mo<span>BILL</span>ity</a>
     <ul class="nav-links">
       <li><a href="#how">How it works</a></li>
@@ -909,20 +912,37 @@ nav {
       <li><a href="#compliance">Compliance</a></li>
     </ul>
     <a class="demo-trigger" href="login.html?tab=coder">Launch Demo</a>
+    <a class="book-call" href="https://calendar.app.google/1tXP28HGQQP2kBeQA" target="_blank" rel="noopener noreferrer">Book a call <span aria-hidden="true">↗</span></a>
   </nav>
 
   <!-- HERO -->
   <section class="hero">
-    <div class="hero-bg"></div>
+    <div class="hero-bg" aria-hidden="true"></div>
+    <span class="hero-eyebrow">CLINICAL INTELLIGENCE / HUMAN IMPACT</span>
     <div class="hero-badge">Now supporting ICD-10 & CPT codes</div>
     <h1>Medical coding,<br/><em>reimagined</em> with AI.</h1>
     <p>Automatically extract accurate ICD-10 and CPT codes from clinical notes in seconds. Built for clinicians, billers, and healthcare teams.</p>
     <div class="hero-actions">
       <a class="btn-primary hero-demo-launch" href="login.html?tab=coder">Launch Demo</a>
-      <a href="#how" class="btn-secondary">See how it works</a>
+      <a href="https://calendar.app.google/1tXP28HGQQP2kBeQA" class="btn-secondary" target="_blank" rel="noopener noreferrer">Book a call ↗</a>
     </div>
 
     <div class="hero-visual">
+      <div class="intelligence-visual" aria-label="Illustration of clinical notes flowing through AI analysis into medical codes" role="img">
+        <div class="system-label"><span></span> THE INTELLIGENCE LAYER <span class="system-index">01 / 03</span></div>
+        <svg class="neural-map" viewBox="0 0 480 440" fill="none" aria-hidden="true">
+          <defs><linearGradient id="signal" x1="0" y1="0" x2="480" y2="440" gradientUnits="userSpaceOnUse"><stop stop-color="#00e5c7"/><stop offset="1" stop-color="#3b82f6"/></linearGradient><radialGradient id="core"><stop stop-color="#00c2a8" stop-opacity=".3"/><stop offset="1" stop-color="#00c2a8" stop-opacity="0"/></radialGradient></defs>
+          <circle cx="240" cy="220" r="180" fill="url(#core)"/>
+          <g class="orbit-rings" stroke="url(#signal)"><ellipse cx="240" cy="220" rx="172" ry="75"/><ellipse cx="240" cy="220" rx="172" ry="75" transform="rotate(60 240 220)"/><ellipse cx="240" cy="220" rx="172" ry="75" transform="rotate(120 240 220)"/><circle cx="240" cy="220" r="126" stroke-dasharray="2 10"/></g>
+          <g stroke="url(#signal)" stroke-opacity=".55"><path d="M65 110 240 220 412 110M65 330 240 220 412 330M240 40V400"/><circle cx="240" cy="220" r="60"/><circle cx="240" cy="220" r="48" stroke-dasharray="3 6"/></g>
+          <g fill="#00e5c7"><circle cx="65" cy="110" r="5"/><circle cx="412" cy="110" r="5"/><circle cx="65" cy="330" r="5"/><circle cx="412" cy="330" r="5"/><circle cx="240" cy="40" r="4"/><circle cx="240" cy="400" r="4"/></g>
+          <path d="M213 220h15l7-17 12 34 8-17h12" stroke="#00e5c7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <g fill="#a8bdcf" font-family="monospace" font-size="10" letter-spacing="2"><text x="23" y="92">NOTES</text><text x="370" y="92">CONTEXT</text><text x="24" y="356">ICD-10</text><text x="389" y="356">CPT</text></g>
+        </svg>
+        <div class="signal-flow"><span>01 / CAPTURE</span><span>02 / UNDERSTAND</span><span>03 / CODE</span></div>
+        <div class="system-caption">Less administration.<br><strong>More time for care.</strong></div>
+      </div>
+
       <div class="hero-card">
         <!-- Window chrome -->
         <div class="card-chrome">
@@ -967,6 +987,8 @@ nav {
       </div>
     </div>
   </section>
+
+  <a class="scroll-cue" href="#calling">EXPLORE THE PLATFORM <span aria-hidden="true">↓</span></a>
 
   <!-- AI CALLING ASSISTANT -->
   <section class="calling" id="calling">
@@ -1147,7 +1169,7 @@ nav {
       <span class="section-tag">Get started today</span>
       <h2 class="section-title">Ready to eliminate manual coding?</h2>
       <p class="section-sub">Join healthcare teams already saving hours every week with AI-powered code extraction.</p>
-      <a href="app.html" class="btn-primary">Launch moBILLity →</a>
+      <a href="https://calendar.app.google/1tXP28HGQQP2kBeQA" class="btn-primary" target="_blank" rel="noopener noreferrer">Book a call ↗</a>
     </div>
   </section>
 
@@ -1155,28 +1177,15 @@ nav {
   <footer>
     <a class="footer-logo" href="#">mo<span>BILL</span>ity</a>
 
-    <div>
-      <a href="#">Privacy</a>
-      <a href="#">Terms</a>
-      <a href="#">Contact</a>
+    <div class="footer-links" aria-label="Legal and contact links">
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:rithuakella@gmail.com?subject=moBILLity%20Terms%20of%20Service" title="Request our terms of service by email">Terms</a>
+      <a href="mailto:rithuakella@gmail.com">Contact</a>
     </div>
   </footer>
 
+  <script src="static/panel-scroll.js?v=restored-home-1"></script>
   <script>
-    // ── SCROLL REVEAL ──
-    const reveals = document.querySelectorAll('.reveal');
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
-        if (e.isIntersecting) {
-          const siblings = [...e.target.parentElement.querySelectorAll('.reveal')];
-          const idx = siblings.indexOf(e.target);
-          setTimeout(() => e.target.classList.add('visible'), idx * 80);
-          observer.unobserve(e.target);
-        }
-      });
-    }, { threshold: 0.1 });
-    reveals.forEach(el => observer.observe(el));
-
     // ── LIVE DEMO ANIMATION ──
     const scenarios = [
       {
