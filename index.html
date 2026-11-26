@@ -896,7 +896,7 @@ nav {
       .calling-layout { grid-template-columns: 1fr; gap: 2.5rem; }
     }
   </style>
-  <link rel="stylesheet" href="static/website-refresh.css?v=connected-care-1">
+  <link rel="stylesheet" href="static/website-refresh.css?v=care-bridge-horizontal-3">
   <link rel="stylesheet" href="static/demo-menu.css">
 </head>
 <body>
@@ -929,18 +929,37 @@ nav {
     </div>
 
     <div class="hero-visual">
-      <div class="intelligence-visual" aria-label="Illustration connecting patients, care teams, visits, and clinical information" role="img">
-        <div class="system-label"><span></span> THE CONNECTED CARE LAYER <span class="system-index">01 / 03</span></div>
-        <svg class="neural-map" viewBox="0 0 480 440" fill="none" aria-hidden="true">
+      <div class="intelligence-visual" aria-label="Efficiency, Quality, Administration, and Experience shape Care Delivery at the center of the Care Teams and Patients relationship" role="img">
+        <div class="system-label"><span></span> THE CONNECTED CARE LAYER <span class="system-index">4 PILLARS</span></div>
+        <svg class="neural-map" viewBox="-130 -30 740 500" fill="none" aria-hidden="true">
           <defs><linearGradient id="signal" x1="0" y1="0" x2="480" y2="440" gradientUnits="userSpaceOnUse"><stop stop-color="#00e5c7"/><stop offset="1" stop-color="#3b82f6"/></linearGradient><radialGradient id="core"><stop stop-color="#00c2a8" stop-opacity=".3"/><stop offset="1" stop-color="#00c2a8" stop-opacity="0"/></radialGradient></defs>
           <circle cx="240" cy="220" r="180" fill="url(#core)"/>
-          <g class="orbit-rings" stroke="url(#signal)"><ellipse cx="240" cy="220" rx="172" ry="75"/><ellipse cx="240" cy="220" rx="172" ry="75" transform="rotate(60 240 220)"/><ellipse cx="240" cy="220" rx="172" ry="75" transform="rotate(120 240 220)"/><circle cx="240" cy="220" r="126" stroke-dasharray="2 10"/></g>
-          <g stroke="url(#signal)" stroke-opacity=".55"><path d="M65 110 240 220 412 110M65 330 240 220 412 330M240 40V400"/><circle cx="240" cy="220" r="60"/><circle cx="240" cy="220" r="48" stroke-dasharray="3 6"/></g>
-          <g fill="#00e5c7"><circle cx="65" cy="110" r="5"/><circle cx="412" cy="110" r="5"/><circle cx="65" cy="330" r="5"/><circle cx="412" cy="330" r="5"/><circle cx="240" cy="40" r="4"/><circle cx="240" cy="400" r="4"/></g>
-          <path d="M213 220h15l7-17 12 34 8-17h12" stroke="#00e5c7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-          <g fill="#a8bdcf" font-family="monospace" font-size="10" letter-spacing="2"><text x="23" y="92">PATIENTS</text><text x="370" y="92">TEAMS</text><text x="24" y="356">VISITS</text><text x="389" y="356">CARE</text></g>
+          <g class="orbit-rings">
+            <g stroke="url(#signal)"><ellipse cx="240" cy="220" rx="225" ry="98"/><ellipse cx="240" cy="220" rx="225" ry="98" transform="rotate(60 240 220)"/><ellipse cx="240" cy="220" rx="225" ry="98" transform="rotate(120 240 220)"/><circle cx="240" cy="220" r="126" stroke-dasharray="2 10"/></g>
+            <path d="M240 220 128 110M240 220 352 110M240 220 128 330M240 220 352 330" stroke="url(#signal)" stroke-opacity=".7"/>
+            <g fill="#00e5c7"><circle cx="128" cy="110" r="5"/><circle cx="352" cy="110" r="5"/><circle cx="128" cy="330" r="5"/><circle cx="352" cy="330" r="5"/></g>
+            <g fill="#e0f6f3" font-family="DM Sans, sans-serif" font-size="18" font-weight="500" text-anchor="middle">
+              <g transform="translate(128 110)"><g class="orbit-label"><text y="-29">Quality</text></g></g>
+              <g transform="translate(352 110)"><g class="orbit-label"><text y="-29">Experience</text></g></g>
+              <g transform="translate(128 330)"><g class="orbit-label"><text y="30">Efficiency</text></g></g>
+              <g transform="translate(352 330)"><g class="orbit-label"><text y="30">Administration</text></g></g>
+            </g>
+          </g>
+          <g stroke="url(#signal)" stroke-opacity=".7"><path d="M-21 220H501" stroke-width="2"/></g>
+          <circle cx="240" cy="220" r="52" fill="#10283e" stroke="#00e5c7" stroke-opacity=".7"/>
+          <text x="240" y="214" fill="#e0f6f3" font-family="DM Sans, sans-serif" font-size="22" font-weight="600" text-anchor="middle">Care<tspan x="240" dy="23">Delivery</tspan></text>
+          <g>
+            <g fill="#62d9cb" stroke="#a7f3e8" stroke-width="1.5">
+              <circle cx="-70" cy="220" r="49"/>
+              <circle cx="550" cy="220" r="49"/>
+            </g>
+            <g fill="#0a2536" font-family="DM Sans, sans-serif" font-size="20" font-weight="600" text-anchor="middle">
+              <text x="-70" y="214">Care<tspan x="-70" dy="23">Teams</tspan></text>
+              <text x="550" y="227">Patients</text>
+            </g>
+          </g>
         </svg>
-        <div class="signal-flow"><span>01 / CONNECT</span><span>02 / COORDINATE</span><span>03 / CARE</span></div>
+        <div class="signal-flow care-bridge-caption"><span>CARE TEAMS</span><span aria-hidden="true">CONNECTED CARE</span><span>PATIENTS</span></div>
         <div class="system-caption">Closer to patients.<br><strong>Lighter on your team.</strong></div>
       </div>
 
@@ -1174,7 +1193,7 @@ nav {
     </div>
   </footer>
 
-  <script src="static/panel-scroll.js?v=connected-care-1"></script>
+  <script src="static/panel-scroll.js?v=care-bridge-horizontal-3"></script>
   <script>
     // ── LIVE DEMO ANIMATION ──
     const scenarios = [
